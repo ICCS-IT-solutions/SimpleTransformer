@@ -24,16 +24,20 @@ namespace SimpleTransformer.Model
             _lastInput = input;
 
             //Multi-head attention
-            Tensor residual1 = input;
+            Tensor residual1 = input.Clone();
 
             Tensor attention = _multiHeadAttention.Forward(input);
+            if (attention.Rows != residual1.Rows || attention.Cols != residual1.Cols)
+            {
+                throw new InvalidOperationException("Attention output shape mismatch.");
+            }
 
             TensorExtensions.ElementWiseAddInPlace(attention, residual1);
 
             Tensor norm1 = _layerNorm1.Forward(attention);
 
             //Feed forward
-            Tensor residual2 = norm1;
+            Tensor residual2 = norm1.Clone();
 
             Tensor ff = _feedForward.Forward(norm1);
 
