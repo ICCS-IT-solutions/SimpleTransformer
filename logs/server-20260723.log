@@ -122,3 +122,65 @@ Feed forward size: 3072
 2026-07-23 20:41:04.310 +02:00 [INF] Application started. Press Ctrl+C to shut down.
 2026-07-23 20:41:04.310 +02:00 [INF] Hosting environment: Production
 2026-07-23 20:41:04.310 +02:00 [INF] Content root path: C:\Users\Iain\vscode\llm\SimpleTransformer\SimpleTransformer
+2026-07-23 22:44:52.118 +02:00 [INF] Configuration is valid. Proceeding...
+2026-07-23 22:44:52.493 +02:00 [INF] Current configuration:
+Vocabulary size: 30522
+Embedding size: 768
+Number of layers: 12
+Number of heads: 12
+Maximum sequence length: 512
+Feed forward size: 3072
+2026-07-23 22:44:52.493 +02:00 [INF] Constructing transformer architecture. Please stand by...
+2026-07-23 22:44:52.849 +02:00 [INF] Layer 0 constructed.
+2026-07-23 22:44:53.201 +02:00 [INF] Layer 1 constructed.
+2026-07-23 22:44:53.549 +02:00 [INF] Layer 2 constructed.
+2026-07-23 22:44:53.897 +02:00 [INF] Layer 3 constructed.
+2026-07-23 22:44:54.252 +02:00 [INF] Layer 4 constructed.
+2026-07-23 22:44:54.600 +02:00 [INF] Layer 5 constructed.
+2026-07-23 22:44:54.948 +02:00 [INF] Layer 6 constructed.
+2026-07-23 22:44:55.295 +02:00 [INF] Layer 7 constructed.
+2026-07-23 22:44:55.645 +02:00 [INF] Layer 8 constructed.
+2026-07-23 22:44:55.994 +02:00 [INF] Layer 9 constructed.
+2026-07-23 22:44:56.343 +02:00 [INF] Layer 10 constructed.
+2026-07-23 22:44:56.724 +02:00 [INF] Layer 11 constructed.
+2026-07-23 22:44:56.724 +02:00 [INF] Transformer architecture initialisation completed.
+2026-07-23 22:44:56.724 +02:00 [INF] Transformer model ready to be loaded.
+2026-07-23 22:44:57.114 +02:00 [INF] Loading transformer model...
+2026-07-23 22:44:57.114 +02:00 [INF] Transformer model loaded.
+2026-07-23 22:44:57.216 +02:00 [INF] REST API ready.
+2026-07-23 22:44:57.216 +02:00 [INF] Listening for requests...
+2026-07-23 22:44:57.339 +02:00 [INF] Now listening on: https://localhost:5001
+2026-07-23 22:44:57.342 +02:00 [INF] Application started. Press Ctrl+C to shut down.
+2026-07-23 22:44:57.342 +02:00 [INF] Hosting environment: Production
+2026-07-23 22:44:57.342 +02:00 [INF] Content root path: C:\Users\Iain\vscode\llm\SimpleTransformer\SimpleTransformer
+2026-07-23 22:59:05.615 +02:00 [INF] Configuration is valid. Proceeding...
+2026-07-23 22:59:06.007 +02:00 [INF] Current configuration:
+Vocabulary size: 30522
+Embedding size: 768
+Number of layers: 12
+Number of heads: 12
+Maximum sequence length: 512
+Feed forward size: 3072
+2026-07-23 22:59:06.008 +02:00 [INF] Constructing transformer architecture. Please stand by...
+2026-07-23 22:59:06.375 +02:00 [INF] Layer 0 constructed.
+2026-07-23 22:59:06.736 +02:00 [INF] Layer 1 constructed.
+2026-07-23 22:59:07.093 +02:00 [INF] Layer 2 constructed.
+2026-07-23 22:59:07.450 +02:00 [INF] Layer 3 constructed.
+2026-07-23 22:59:07.902 +02:00 [INF] Layer 4 constructed.
+2026-07-23 22:59:08.264 +02:00 [INF] Layer 5 constructed.
+2026-07-23 22:59:08.623 +02:00 [INF] Layer 6 constructed.
+2026-07-23 22:59:08.983 +02:00 [INF] Layer 7 constructed.
+2026-07-23 22:59:09.343 +02:00 [INF] Layer 8 constructed.
+2026-07-23 22:59:09.703 +02:00 [INF] Layer 9 constructed.
+2026-07-23 22:59:10.063 +02:00 [INF] Layer 10 constructed.
+2026-07-23 22:59:10.433 +02:00 [INF] Layer 11 constructed.
+2026-07-23 22:59:10.433 +02:00 [INF] Transformer architecture initialisation completed.
+2026-07-23 22:59:10.434 +02:00 [INF] Transformer model ready to be loaded.
+2026-07-23 22:59:10.770 +02:00 [INF] Loading transformer model...
+2026-07-23 22:59:10.770 +02:00 [INF] Transformer model loaded.
+2026-07-23 22:59:10.869 +02:00 [INF] REST API ready.
+2026-07-23 22:59:10.870 +02:00 [INF] Listening for requests...
+2026-07-23 22:59:10.947 +02:00 [INF] Now listening on: http://localhost:5000
+2026-07-23 22:59:10.950 +02:00 [INF] Application started. Press Ctrl+C to shut down.
+2026-07-23 22:59:10.951 +02:00 [INF] Hosting environment: Production
+2026-07-23 22:59:10.951 +02:00 [INF] Content root path: C:\Users\Iain\vscode\llm\SimpleTransformer\SimpleTransformer
