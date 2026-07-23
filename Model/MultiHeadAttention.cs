@@ -29,7 +29,7 @@ namespace SimpleTransformer.Model
                 outputs.Add(head.Forward(input, mask));
             }
             //Concatenate the outputs
-            Tensor concatenated = TensorExtensions.ConcatenateColumns(outputs);
+            Tensor concatenated = TensorUtilities.ConcatenateColumns(outputs);
 
             //Apply the output projection
             return _outputProjection.Forward(concatenated);

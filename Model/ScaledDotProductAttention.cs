@@ -32,11 +32,11 @@ namespace SimpleTransformer.Model
             _lastV = v;
       
             //Compute scores by matrix multiplication of q and kT
-            Tensor scores = TensorExtensions.MultiplyTransposeRight(q, k);
+            Tensor scores = TensorMath.MultiplyTransposeRight(q, k);
             _lastScores = scores.Clone();
 
             //Scale scores in place by sqrt(headSize) and divide by sqrt(d) in place
-            TensorExtensions.ScaleInPlace(scores, 1.0f / MathF.Sqrt(_headSize));
+            TensorMath.ScaleInPlace(scores, 1.0f / MathF.Sqrt(_headSize));
 
             if(mask != null)
             {
@@ -44,15 +44,15 @@ namespace SimpleTransformer.Model
                 {
                     throw new ArgumentException("Mask dimensions do not match attention scores.");
                 }
-                TensorExtensions.ApplyMaskInPlace(scores, mask);
+                TensorMaskExtensions.ApplyMaskInPlace(scores, mask);
             }
 
-            TensorExtensions.SoftmaxRowsInPlace(scores);
+            TensorUtilities.SoftmaxRowsInPlace(scores);
 
             //Store last weights after softmax
             _lastWeights = scores.Clone();
 
-            return TensorExtensions.MatrixMultiply(scores, v);
+            return TensorMath.MatrixMultiply(scores, v);
         }
         public Tensor Backward(Tensor gradient) => throw new NotImplementedException();
     }

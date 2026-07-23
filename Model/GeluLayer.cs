@@ -11,7 +11,7 @@ namespace SimpleTransformer.Model
             //Cache the input
             _lastInput = input;
 
-            return TensorExtensions.Gelu(input);
+            return TensorMath.Gelu(input);
         }
 
         public Tensor Backward(Tensor gradient)

@@ -47,7 +47,7 @@ namespace SimpleTransformer.Model
 
             for (int row = 0; row < input.Rows; row++)
             {
-                var (avg, variance) = TensorExtensions.MeanAndVarianceRow(input, row); //Compute average and variance using TensorExtensions
+                var (avg, variance) = TensorStatsExtensions.MeanAndVarianceRow(input, row); //Compute average and variance using TensorExtensions
 
                 float denom = MathF.Sqrt(variance + _epsilon);
 

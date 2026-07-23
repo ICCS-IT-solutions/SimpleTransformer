@@ -59,9 +59,9 @@ namespace SimpleTransformer.Model
             // _transposedWeights = TensorExtensions.Transpose(_weights);
 
             var output =
-                TensorExtensions.MatrixMultiply(
+                TensorMath.MatrixMultiply(
                     input,
-                    TensorExtensions.Transpose(_weights)
+                    TensorUtilities.Transpose(_weights)
                 );
             //For each output neuron:
             if(_useBias)

@@ -32,7 +32,7 @@ namespace SimpleTransformer.Model
                 throw new InvalidOperationException("Attention output shape mismatch.");
             }
 
-            TensorExtensions.ElementWiseAddInPlace(attention, residual1);
+            TensorMath.ElementWiseAddInPlace(attention, residual1);
 
             Tensor norm1 = _layerNorm1.Forward(attention);
 
@@ -41,7 +41,7 @@ namespace SimpleTransformer.Model
 
             Tensor ff = _feedForward.Forward(norm1);
 
-            TensorExtensions.ElementWiseAddInPlace(ff, residual2);
+            TensorMath.ElementWiseAddInPlace(ff, residual2);
 
             return _layerNorm2.Forward(ff);
 
