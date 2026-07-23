@@ -97,7 +97,7 @@ namespace SimpleTransformer.Model
 
             Backward(gradient);
 
-            _optimizer.Step(( IEnumerable<ITrainableLayer>)_layers);
+            _optimizer.Step((IEnumerable<ITrainableLayer>)_layers);
 
             return loss;
         }

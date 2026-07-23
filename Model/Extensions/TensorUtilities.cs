@@ -185,6 +185,19 @@ namespace SimpleTransformer.Model.Extensions
                     (outputGradient[i] - dot);
             }
         }
+        public static void SoftmaxBackwardInto(
+            Tensor outputGradient,
+            Tensor softmaxOutput,
+            Tensor inputGradient)
+        {
+            ValidateSameShape(outputGradient, softmaxOutput);
+            ValidateSameShape(outputGradient, inputGradient);
+
+            SoftmaxBackwardRows(
+                softmaxOutput,
+                outputGradient,
+                inputGradient);
+        }
 
         public static Tensor SoftmaxBackward(
             Tensor softmaxOutput,

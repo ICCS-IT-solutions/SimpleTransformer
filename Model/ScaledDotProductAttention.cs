@@ -12,7 +12,11 @@ namespace SimpleTransformer.Model
         private Tensor? _cachedV;
         private Tensor? _cachedWeights;
         private Tensor? _cachedScores;
-
+        private Tensor? _cachedDScores;
+        private Tensor? _cachedDWeights;
+        private Tensor? _cachedDQ;
+        private Tensor? _cachedDV;
+        private Tensor? _cachedDK;
         private Tensor? _lastWeights;
 
         private readonly int _headSize;
@@ -38,11 +42,7 @@ namespace SimpleTransformer.Model
             _lastQ = q;
             _lastK = k;
             _lastV = v;
-
-            _cachedV = EnsureTransposeBuffer(_cachedV, v);
-
-            TensorUtilities.TransposeInto(v, _cachedV);
-      
+     
             //Compute scores by matrix multiplication of q and kT
             Tensor scores = TensorMath.MultiplyTransposeRight(q, k);
 
@@ -60,8 +60,9 @@ namespace SimpleTransformer.Model
 
             TensorUtilities.SoftmaxRowsInPlace(scores);
 
-            //Store last weights after softmax
-            _lastWeights = scores.Clone();
+            //Cache last weights after softmax without allocating new memory
+            _lastWeights = EnsureSameShape(_lastWeights, scores);
+            TensorUtilities.CopyTensor(scores, _lastWeights);
 
             return TensorMath.MatrixMultiply(scores, v);
         }
@@ -84,38 +85,64 @@ namespace SimpleTransformer.Model
             TensorUtilities.TransposeInto(
                 _lastWeights,
                 _cachedWeights);
-                
-            Tensor dV =
-                TensorMath.MatrixMultiply(
-                    _cachedWeights,
-                    outputGradient);
+
+            _cachedDV = EnsureShape(
+                _cachedDV,
+                _lastV.Rows,
+                _lastV.Cols);
+
+            TensorMath.MatrixMultiply(
+                _cachedWeights,
+                outputGradient,
+                _cachedDV);
 
             _cachedV =
                 EnsureTransposeBuffer(
                     _cachedV,
                     _lastV);
 
-            Tensor dWeights =
-                TensorMath.MatrixMultiply(
-                    outputGradient,
-                    _cachedV);
-                        
+            TensorUtilities.TransposeInto(
+                _lastV,
+                _cachedV);
 
+            _cachedDWeights =
+                EnsureShape(
+                    _cachedDWeights,
+                    outputGradient.Rows,
+                    _cachedV.Cols);
+
+            TensorMath.MatrixMultiply(
+                outputGradient,
+                _cachedV,
+                _cachedDWeights);
+
+            Tensor dWeights = _cachedDWeights;
+                                    
             // Softmax derivative
-            Tensor dScores =
-                TensorUtilities.SoftmaxBackward(
-                    dWeights,
-                    _lastWeights);
+            _cachedDScores =
+                EnsureSameShape(_cachedDScores, dWeights);
+
+            TensorUtilities.SoftmaxBackwardInto(
+                dWeights,
+                _lastWeights,
+                _cachedDScores);
+
+            Tensor dScores = _cachedDScores;
 
             TensorMath.ScaleInPlace(
                 dScores,
                 1f / MathF.Sqrt(_headSize));
 
-            Tensor dQ =
-                TensorMath.MatrixMultiply(
-                    dScores,
-                    _lastK);
-                    
+            _cachedDQ = EnsureShape(
+                _cachedDQ,
+                dScores.Rows,
+                _lastK.Cols);
+
+            TensorMath.MatrixMultiply(
+                dScores,
+                _lastK,
+                _cachedDQ);
+      
             _cachedScores =
                 EnsureTransposeBuffer(
                     _cachedScores,
@@ -125,25 +152,50 @@ namespace SimpleTransformer.Model
                 dScores,
                 _cachedScores);
 
-            Tensor dK =
-                TensorMath.MatrixMultiply(
-                    _cachedScores,
-                    _lastQ);
+            _cachedDK = EnsureShape(
+                _cachedDK,
+                _lastK.Rows,
+                _lastK.Cols);
 
-            return (dQ, dK, dV);
+            TensorMath.MatrixMultiply(
+                _cachedScores,
+                _lastQ,
+                _cachedDK);
+            
+            return (_cachedDQ, _cachedDK, _cachedDV);
         }
         private static Tensor EnsureTransposeBuffer(
             Tensor? buffer,
             Tensor source)
         {
+            return EnsureShape(
+                buffer,
+                source.Cols,
+                source.Rows);
+        }
+
+        private static Tensor EnsureSameShape(
+            Tensor? buffer,
+            Tensor source)
+        {
+            return EnsureShape(
+                buffer,
+                source.Rows,
+                source.Cols);
+        }
+        private static Tensor EnsureShape(
+            Tensor? buffer,
+            int rows,
+            int cols)
+        {
             if (buffer == null ||
-                buffer.Rows != source.Cols ||
-                buffer.Cols != source.Rows)
+                buffer.Rows != rows ||
+                buffer.Cols != cols)
             {
-                return new Tensor(source.Cols, source.Rows);
+                return new Tensor(rows, cols);
             }
 
             return buffer;
-        }        
+        }      
     }
 }
