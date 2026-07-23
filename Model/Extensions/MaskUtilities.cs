@@ -1,6 +1,6 @@
-namespace SimpleTransformer.Model
+namespace SimpleTransformer.Model.Extensions
 {
-    public static class TensorMaskExtensions
+    public static class MaskUtilities
     {
 
         #region Mask

@@ -1,3 +1,5 @@
+using SimpleTransformer.Model.Extensions;
+
 namespace SimpleTransformer.Model
 {
     public class GeluLayer : ILayer

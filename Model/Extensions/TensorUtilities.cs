@@ -1,4 +1,4 @@
-namespace SimpleTransformer.Model
+namespace SimpleTransformer.Model.Extensions
 {
     public static class TensorUtilities
     {
@@ -19,6 +19,32 @@ namespace SimpleTransformer.Model
                 throw new ArgumentException(
                     $"Tensor dimensions do not match ({a.Rows}x{a.Cols}) vs ({b.Rows}x{b.Cols}).");
         }
+        public static void ValidateTensorShape(Tensor tensor, int rows, int cols)
+        {
+            if (tensor.Rank != 2)
+                throw new ArgumentException("Tensor must be a matrix.");
+
+            if (tensor.Rows != rows || tensor.Cols != cols)
+                throw new ArgumentException($"Tensor dimensions do not match ({tensor.Rows}x{tensor.Cols}) vs ({rows}x{cols}).");
+        }
+
+        public static void ValidateTensorIsMatrix(Tensor tensor)
+        {
+            if (tensor.Rank != 2)
+                throw new ArgumentException("Tensor must be a matrix.");
+        }
+
+        public static void ValidatePredictionAndTarget(Tensor prediction, Tensor target)
+        {
+            if (prediction.Rank != 2)
+                throw new ArgumentException("Prediction must be a matrix.");
+
+            if (target.Rank != 1)
+                throw new ArgumentException("Target must be a vector.");
+
+            if (prediction.Rows != target.Length)
+                throw new ArgumentException("Prediction and target lengths do not match.");
+        }
 
         public static void ValidateSequenceLength(int sequenceLength)
         {
@@ -36,6 +62,15 @@ namespace SimpleTransformer.Model
 
             //Copy the source to the destination
             src.CopyTo(dst);
+        }
+
+        public static void CopyTensor(Tensor src, Tensor dst)
+        {
+            //Make sure the source and destination have the same shape
+            ValidateSameShape(src, dst);
+
+            //Copy the source to the destination
+            Array.Copy(src.Data, dst.Data, src.Data.Length);
         }
 
         public static Tensor ConcatenateColumns(IReadOnlyList<Tensor> tensors) => ConcatenateColumns(tensors.AsEnumerable());
@@ -121,6 +156,62 @@ namespace SimpleTransformer.Model
             return res;
         }
 
+        public static void SoftmaxBackwardInPlace(
+            ReadOnlySpan<float> softmaxOutput,
+            ReadOnlySpan<float> outputGradient,
+            Span<float> inputGradient)
+        {
+            if (softmaxOutput.Length != outputGradient.Length)
+                throw new ArgumentException(
+                    "Vectors must have the same length.");
+
+            if (softmaxOutput.Length != inputGradient.Length)
+                throw new ArgumentException(
+                    "Vectors must have the same length.");
+
+            float dot = 0f;
+
+            for (int i = 0; i < softmaxOutput.Length; i++)
+            {
+                dot +=
+                    outputGradient[i] *
+                    softmaxOutput[i];
+            }
+
+            for (int i = 0; i < softmaxOutput.Length; i++)
+            {
+                inputGradient[i] =
+                    softmaxOutput[i] *
+                    (outputGradient[i] - dot);
+            }
+        }
+
+        public static Tensor SoftmaxBackward(
+            Tensor softmaxOutput,
+            Tensor outputGradient)
+        {
+            if (softmaxOutput.Rank != 1)
+                throw new ArgumentException(
+                    "Softmax output must be a vector.");
+
+            if (outputGradient.Rank != 1)
+                throw new ArgumentException(
+                    "Gradient must be a vector.");
+
+            if (softmaxOutput.Length != outputGradient.Length)
+                throw new ArgumentException(
+                    "Vectors must have the same length.");
+
+            var inputGradient = new Tensor(softmaxOutput.Shape);
+
+            SoftmaxBackwardInPlace(
+                softmaxOutput.Data,
+                outputGradient.Data,
+                inputGradient.Data);
+
+            return inputGradient;
+        }        
+
         //Compute softmax in place on an existing vector
         public static void SoftmaxInPlace(Span<float> values)
         {
@@ -155,12 +246,28 @@ namespace SimpleTransformer.Model
 
             for (int row = 0; row < matrix.Rows; row++)
             {
-                TensorExtensions.GetRow(matrix, row).CopyTo(TensorExtensions.GetWritableRow(result, row));
+                RowUtilities.GetRow(matrix, row).CopyTo(RowUtilities.GetWritableRow(result, row));
             }
 
             SoftmaxRowsInPlace(result);
 
             return result;
+        }
+        public static void SoftmaxBackwardRows(
+            Tensor softmaxOutput,
+            Tensor outputGradient,
+            Tensor inputGradient)
+        {
+            ValidateSameShape(softmaxOutput, outputGradient);
+            ValidateSameShape(softmaxOutput, inputGradient);
+
+            for (int row = 0; row < softmaxOutput.Rows; row++)
+            {
+                SoftmaxBackwardInPlace(
+                    RowUtilities.GetRow(softmaxOutput, row),
+                    RowUtilities.GetRow(outputGradient, row),
+                    RowUtilities.GetWritableRow(inputGradient, row));
+            }
         }
 
         //Updates the input matrix with each row softmaxed
@@ -171,27 +278,64 @@ namespace SimpleTransformer.Model
 
             for (int row = 0; row < matrix.Rows; row++)
             {
-                SoftmaxInPlace(TensorExtensions.GetWritableRow(matrix, row));
+                SoftmaxInPlace(RowUtilities.GetWritableRow(matrix, row));
             }
         }
         #endregion   
 
         #region Transposition
-                public static Tensor Transpose(Tensor matrix)
+        public static Tensor Transpose(Tensor matrix)
         {
             if (matrix.Rank != 2)
                 throw new ArgumentException("Matrix must be a 2D tensor.");
 
             var result = new Tensor(matrix.Cols, matrix.Rows);
-            for (int i = 0; i < matrix.Rows; i++)
-            {
-                for (int j = 0; j < matrix.Cols; j++)
-                {
-                    result[j, i] = matrix[i, j];
-                }
-            }
+
+            TransposeInto(matrix, result);
+
             return result;
         }
+
+        //Performs an in-place transpose of two matrices
+        public static void TransposeInto(Tensor source, Tensor destination)
+        {
+            if (source.Rank != 2)
+                throw new ArgumentException("Source must be a matrix.");
+
+            if (destination.Rank != 2)
+                throw new ArgumentException("Destination must be a matrix.");
+
+            if (destination.Rows != source.Cols ||
+                destination.Cols != source.Rows)
+            {
+                throw new ArgumentException(
+                    $"Destination must have shape ({source.Cols}, {source.Rows}).");
+            }
+
+            for (int row = 0; row < source.Rows; row++)
+            {
+                for (int col = 0; col < source.Cols; col++)
+                {
+                    destination[col, row] = source[row, col];
+                }
+            }
+        }
+
+        public static void Fill(Tensor tensor, float value)
+        {
+            Array.Fill(tensor.Data, value);
+        }
+
+        public static void FillRandom(Tensor tensor, Random rnd, float min = -0.1f, float max = 0.1f)
+        {
+            if (min >= max) throw new ArgumentException("Minimum must be less than maximum.");
+
+            for (int i = 0; i < tensor.Length; i++)
+            {
+                tensor.Data[i] =
+                    (float)rnd.NextDouble() * (max - min) + min;
+            }
+        }        
 
         #endregion     
     }

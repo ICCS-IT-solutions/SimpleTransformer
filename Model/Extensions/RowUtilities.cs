@@ -1,19 +1,21 @@
-namespace SimpleTransformer.Model
+namespace SimpleTransformer.Model.Extensions
 {
 
     
     // Todo: next steps:
+    // Priority work:
+    // ✅ Implement embeddings and positional encodings. 
+    
     // Math and extensions:
-    // ✅ Add or finish tests for tensor math.
-    // ✅ Refactor TensorExtensions into focused helper classes without changing behavior.
-    // ✅ Verify all tests still pass.
+    // ✅ Add or finish tests for tensor math. - Needs to be created
+    // ✅ Refactor TensorExtensions into focused helper classes without changing behavior. - done
+    
     // Model and functionality:
-    // ✅ Implement embeddings and positional encodings.
     // ✅ Build the full encoder/decoder model around the existing TransformerBlocks.
     // ✅ Move on to training (losses, backpropagation, optimizers).
     // Bring in dropout layer for optimisation.
 
-    public static class TensorExtensions
+    public static class RowUtilities
     {   
         #region Row ops
         //Copies a row in-place. Is it worth creating a CopyRow method that copies to a new row?
@@ -71,6 +73,19 @@ namespace SimpleTransformer.Model
             return new ReadOnlySpan<float>(source.Data, sourceRow * source.Cols, source.Cols);
         }
 
+        //Add a row in place to the destination tensor. Both must be identical in shape for this to work
+        public static void AddRowInPlace(Tensor source, int srcRow, Tensor destination, int dstRow)
+        {
+            var src = GetRow(source, srcRow);
+            var dst = GetWritableRow(destination, dstRow);
+
+            //Copy the row
+            for(int i = 0; i < src.Length; i++)
+            {
+                dst[i] += src[i];
+            }
+        }
+
         public static Span<float> GetWritableRow(Tensor source, int sourceRow)
         {
             //Check the source: It must be a matrix (rank == 2)
@@ -81,22 +96,6 @@ namespace SimpleTransformer.Model
                 throw new ArgumentOutOfRangeException(nameof(sourceRow),"Row index out of range.");
             return new Span<float>(source.Data, sourceRow * source.Cols, source.Cols);
         }
-        public static void Fill(Tensor tensor, float value)
-        {
-            Array.Fill(tensor.Data, value);
-        }
-
-        public static void FillRandom(Tensor tensor, Random rnd, float min = -0.1f, float max = 0.1f)
-        {
-            if (min >= max) throw new ArgumentException("Minimum must be less than maximum.");
-
-            for (int i = 0; i < tensor.Length; i++)
-            {
-                tensor.Data[i] =
-                    (float)rnd.NextDouble() * (max - min) + min;
-            }
-        }
-
         #endregion
     }
 }

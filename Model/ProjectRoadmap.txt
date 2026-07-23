@@ -1,0 +1,57 @@
+// ======================================================
+// ROADMAP
+// ======================================================
+//
+// Phase 1 - Tensor Library
+// ------------------------
+// ✔ Matrix operations
+// ✔ Row utilities
+// ✔ Statistics
+// ✔ Masking
+// ✔ Softmax
+// ✔ GELU
+//
+// Phase 2 - Transformer Layers
+// -----------------------------
+// ✔ LinearLayer
+// ✔ LayerNorm
+// ✔ AttentionHead
+// ✔ MultiHeadAttention
+// ✔ FeedForwardLayer
+// ✔ TransformerBlock
+//
+// Phase 3 - Model Assembly
+// -------------------------
+// □ EmbeddingLayer
+// □ PositionalEncoding
+// □ TransformerEncoder
+// □ TransformerDecoder (optional)
+// □ TransformerModel
+//
+// Phase 4 - Training
+// ------------------
+// □ CrossEntropyLoss
+// □ Backpropagation
+// □ SGD / Adam optimizer
+// □ Gradient clipping
+//
+// Phase 5 - Improvements
+// -----------------------
+// □ Dropout
+// □ Weight serialization
+// □ Unit tests
+// □ Performance profiling
+
+
+Layer	Trainable?	Reason
+EmbeddingLayer	✅ Yes	Learns the embedding matrix. -- Trainability implemented.
+LinearLayer	✅ Yes	Learns weights and biases. -- Trainability implemented.
+LayerNorm	✅ Yes	Learns gamma (scale) and beta (shift). -- Trainability implemented.
+AttentionHead	✅ Yes	If it owns the query/key/value/output LinearLayers directly, it should expose their parameters (or forward them).
+MultiHeadAttention	Usually ✅	It owns the output projection LinearLayer, and likely the attention heads, so it should expose all child parameters.
+FeedForwardLayer	Usually ✅	It owns two LinearLayers, so it should expose their parameters.
+TransformerBlock	Usually ✅	It owns trainable child layers and should aggregate their parameters.
+GeluLayer	❌ No	Pure activation function. No learned parameters.
+PositionalEncodingLayer	❌ No	Fixed sinusoidal encoding. Nothing is learned.
+CrossEntropyLoss	❌ No	Computes the loss only.
+TransformerModel	Not a layer	It orchestrates everything.

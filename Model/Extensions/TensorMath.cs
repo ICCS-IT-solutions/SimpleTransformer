@@ -1,4 +1,4 @@
-namespace SimpleTransformer.Model
+namespace SimpleTransformer.Model.Extensions
 {
     public static class TensorMath
     {
@@ -332,7 +332,7 @@ namespace SimpleTransformer.Model
 
             if (rowB < 0 || rowB >= matrixB.Rows)
                 throw new ArgumentOutOfRangeException(nameof(rowB));            
-            return Dot(TensorExtensions.GetRow(matrixA, rowA), TensorExtensions.GetRow(matrixB, rowB));
+            return Dot(RowUtilities.GetRow(matrixA, rowA), RowUtilities.GetRow(matrixB, rowB));
         }
 
         public static float Dot(ReadOnlySpan<float> a, ReadOnlySpan<float> b)

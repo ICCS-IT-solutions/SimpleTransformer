@@ -1,6 +1,6 @@
-namespace SimpleTransformer.Model
+namespace SimpleTransformer.Model.Extensions
 {
-    public static class TensorStatsExtensions
+    public static class StatsUtilities
     {
         #region Statistics utilities
 
@@ -57,7 +57,7 @@ namespace SimpleTransformer.Model
             if (matrix.Rank != 2)
                 throw new ArgumentException("Input must be a matrix.");
 
-            return Average(TensorExtensions.GetRow(matrix, row));
+            return Average(RowUtilities.GetRow(matrix, row));
         }
         public static float MeanRow(Tensor matrix, int row)
         {
@@ -69,18 +69,18 @@ namespace SimpleTransformer.Model
             if (matrix.Rank != 2) 
                 throw new ArgumentException("Input must be a matrix.");
 
-            return Median(TensorExtensions.GetRow(matrix, row));
+            return Median(RowUtilities.GetRow(matrix, row));
         }
 
         public static float VarianceRow(Tensor matrix, int row, float avg)
         {
-            return Variance(TensorExtensions.GetRow(matrix, row), avg);
+            return Variance(RowUtilities.GetRow(matrix, row), avg);
         }
 
         //Get both average/mean and variance for a row
         public static (float average, float variance) AverageAndVarianceRow(Tensor matrix, int row)
         {
-            var values = TensorExtensions.GetRow(matrix, row);
+            var values = RowUtilities.GetRow(matrix, row);
 
             float avg = Average(values);
             float var = Variance(values, avg);
