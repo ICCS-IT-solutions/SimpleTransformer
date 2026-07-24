@@ -1,3 +1,5 @@
+using System.Diagnostics;
+
 namespace SimpleTransformer.Model
 {
     public class AttentionHead : ITrainableLayer
@@ -6,24 +8,15 @@ namespace SimpleTransformer.Model
         private readonly LinearLayer _queryProjection;
         private readonly LinearLayer _keyProjection;
         private readonly LinearLayer _valueProjection;
+        private Tensor? _cachedInputGradient;
         public LinearLayer QueryProjection => _queryProjection;
         public LinearLayer KeyProjection => _keyProjection;
         public LinearLayer ValueProjection => _valueProjection;        
         private ScaledDotProductAttention _attention;
-        public IEnumerable<TrainableParameter> Parameters
-        {
-            get
-            {
-                foreach (var p in _queryProjection.Parameters)
-                    yield return p;
-
-                foreach (var p in _keyProjection.Parameters)
-                    yield return p;
-
-                foreach (var p in _valueProjection.Parameters)
-                    yield return p;
-            }
-        }
+        public IEnumerable<TrainableParameter> Parameters =>
+            _queryProjection.Parameters
+                .Concat(_keyProjection.Parameters)
+                .Concat(_valueProjection.Parameters);
 
 
         public AttentionHead(int embeddingSize, int headSize)
@@ -62,19 +55,33 @@ namespace SimpleTransformer.Model
 
             Tensor dInputV =
                 _valueProjection.Backward(dV);
+                
+            Debug.Assert(
+                dInputQ.Rows == dInputK.Rows &&
+                dInputQ.Rows == dInputV.Rows &&
+                dInputQ.Cols == dInputK.Cols &&
+                dInputQ.Cols == dInputV.Cols);                
 
-            var inputGradient =
+            _cachedInputGradient =
                 new Tensor(dInputQ.Rows, dInputQ.Cols);
-
-            for (int i = 0; i < inputGradient.Data.Length; i++)
+            if (_cachedInputGradient.Rows != dInputQ.Rows ||
+                _cachedInputGradient.Cols != dInputQ.Cols)
             {
-                inputGradient.Data[i] =
-                    dInputQ.Data[i]
-                + dInputK.Data[i]
-                + dInputV.Data[i];
+                _cachedInputGradient =
+                    new Tensor(dInputQ.Rows, dInputQ.Cols);
             }
 
-            return inputGradient;
+            float[] dst = _cachedInputGradient.Data;
+            float[] qd  = dInputQ.Data;
+            float[] kd  = dInputK.Data;
+            float[] vd  = dInputV.Data;
+
+            for (int i = 0; i < dst.Length; i++)
+            {
+                dst[i] = qd[i] + kd[i] + vd[i];
+            }
+
+            return _cachedInputGradient;
         }
 
         public void ZeroGradients()

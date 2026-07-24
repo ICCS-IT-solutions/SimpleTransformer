@@ -2,12 +2,33 @@ using Serilog;
 
 namespace SimpleTransformer.Model
 {
+    //Future work: Implement batched training and gradient clipping by norm.
     public class TransformerModel
     {
         //These don't yet exist, but are created when the constructor calls BuildModel(). 
         private EmbeddingLayer _embedding = null!;
-        private PositionalEncodingLayer _position = null!;
-        private Tensor? _lastInput = null;
+        private LinearLayer _outputProjection = null!;
+        private PositionalEncodingLayer _position = null!;       
+        public IEnumerable<TrainableParameter> Parameters
+        {
+            get
+            {
+                foreach (var p in _embedding.Parameters)
+                    yield return p;
+                
+                foreach (var p in _outputProjection.Parameters)
+                    yield return p;
+
+                foreach (var layer in _layers)
+                {
+                    if (layer is ITrainableLayer trainable)
+                    {
+                        foreach (var p in trainable.Parameters)
+                            yield return p;
+                    }
+                }
+            }
+        }       
         private ILossFunction _loss = null!;
         private IOptimizer _optimizer = null!;
         
@@ -47,23 +68,21 @@ namespace SimpleTransformer.Model
                 x = layer.Forward(x);
             }
 
+            x = _outputProjection.Forward(x);
+
             return x;
         }
 
-        public void Backward(Tensor destination)
+        public void Backward(Tensor gradient)
         {
-            if(_lastInput == null) throw new InvalidOperationException("Last input is null.");
+            gradient = _outputProjection.Backward(gradient);
 
-            Tensor gradient = _loss.Backward(_lastInput, destination);
-
-            //Step backwards through the layer list, backpropagating the gradient
-            for(int i = _layers.Count - 1; i >= 0; i--)
+            for (int i = _layers.Count - 1; i >= 0; i--)
             {
-                gradient = _layers[i].Backward(gradient); 
+                gradient = _layers[i].Backward(gradient);
             }
 
             gradient = _position.Backward(gradient);
-
             gradient = _embedding.Backward(gradient);
         }
 
@@ -74,6 +93,10 @@ namespace SimpleTransformer.Model
 
         public void ZeroGradients()
         {
+            _outputProjection.ZeroGradients();
+            //Reset embedding
+            _embedding.ZeroGradients();
+
             foreach (var layer in _layers)
             {
                 if (layer is ITrainableLayer trainableLayer)
@@ -83,21 +106,46 @@ namespace SimpleTransformer.Model
             }
         }
 
+        public void Train(
+            IReadOnlyList<(Tensor Input, Tensor Target)> dataset)
+        {
+            for (int epoch = 0; epoch < Config.Epochs; epoch++)
+            {
+                float epochLoss = 0f;
+
+                foreach (var sample in dataset)
+                {
+                    epochLoss +=
+                        TrainStep(sample.Input, sample.Target);
+                }
+
+                epochLoss /= dataset.Count;
+
+                Log.Information(
+                    "Epoch {Epoch}: Loss={Loss:F6}",
+                    epoch + 1,
+                    epochLoss);
+            }
+        }
+
 
         public float TrainStep(
             Tensor inputs,
             Tensor expectedOutputs)
         {
+            ZeroGradients();
+
             Tensor prediction = Forward(inputs);
 
-            float loss = _loss.Forward(prediction, expectedOutputs);
+            float loss =
+                _loss.Forward(prediction, expectedOutputs);
 
             Tensor gradient =
                 _loss.Backward(prediction, expectedOutputs);
 
             Backward(gradient);
 
-            _optimizer.Step((IEnumerable<ITrainableLayer>)_layers);
+            _optimizer.Step(Parameters);
 
             return loss;
         }
@@ -132,6 +180,7 @@ namespace SimpleTransformer.Model
         {
             
             _embedding = new(Config.VocabSize, Config.EmbeddingSize);
+            _outputProjection = new LinearLayer(Config.EmbeddingSize, Config.VocabSize);
             _position = new(Config.EmbeddingSize, Config.MaxSequenceLength);
             _optimizer = new SgdOptimizer(Config.LearningRate);
 
@@ -146,21 +195,32 @@ Feed forward size: {Config.FeedForwardSize}");
             //Clear any old layers.
             _layers.Clear();
 
+            var watch = System.Diagnostics.Stopwatch.StartNew();
+            var layerWatch = System.Diagnostics.Stopwatch.StartNew();
             Log.Information("Constructing transformer architecture. Please stand by...");
 
             for(int i = 0; i < Config.NumLayers; i++)
             {
+                var componentWatch = System.Diagnostics.Stopwatch.StartNew();
                 var attention = new MultiHeadAttention(
                     Config.EmbeddingSize,
                     Config.NumHeads
                 );
+                Log.Information($"Layer {i}: Attention layer constructed in {componentWatch.ElapsedMilliseconds}ms.");
+                componentWatch.Restart();
                 var feedForward = new FeedForwardLayer(
                     Config.EmbeddingSize,
                     Config.FeedForwardSize);
+                Log.Information($"Layer {i}: Feed forward layer constructed in {componentWatch.ElapsedMilliseconds}ms.");
+                componentWatch.Restart();
 
                 var norm1 = new LayerNorm(Config.EmbeddingSize);
+                Log.Information($"Layer {i}: Layer norm 1 constructed in {componentWatch.ElapsedMilliseconds}ms.");
+                componentWatch.Restart();
 
                 var norm2 = new LayerNorm(Config.EmbeddingSize);
+                Log.Information($"Layer {i}: Layer norm 2 constructed in {componentWatch.ElapsedMilliseconds}ms.");
+                componentWatch.Restart();
 
                 _layers.Add(
                     new TransformerBlock(
@@ -169,9 +229,11 @@ Feed forward size: {Config.FeedForwardSize}");
                         norm1,
                         norm2));
 
-                Log.Information($"Layer {i} constructed.");
+                Log.Information($"Layer {i} constructed in {layerWatch.ElapsedMilliseconds}ms. Total elapsed: {watch.ElapsedMilliseconds}ms.");
+                layerWatch.Restart();
             }
-            Log.Information("Transformer architecture initialisation completed."); 
+            Log.Information($"Transformer architecture initialisation completed in {watch.ElapsedMilliseconds}ms."); 
+            watch.Stop();
         }
     }
 }

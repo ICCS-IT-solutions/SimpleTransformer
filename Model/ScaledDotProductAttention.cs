@@ -8,21 +8,12 @@ namespace SimpleTransformer.Model
         private Tensor? _lastQ;
         private Tensor? _lastK;
         private Tensor? _lastV;
-
-        private Tensor? _cachedV;
-        private Tensor? _cachedWeights;
-        private Tensor? _cachedScores;
-        private Tensor? _cachedDScores;
-        private Tensor? _cachedDWeights;
-        private Tensor? _cachedDQ;
-        private Tensor? _cachedDV;
-        private Tensor? _cachedDK;
-        private Tensor? _lastWeights;
-
+        private readonly AttentionWorkspace _workspace;
         private readonly int _headSize;
         public ScaledDotProductAttention(int headSize)
         {
             _headSize = headSize;
+            _workspace = new AttentionWorkspace();
         }
         public Tensor Forward(Tensor input) => throw new NotImplementedException();
         public Tensor Forward(Tensor q, Tensor k, Tensor v, Tensor? mask = null)
@@ -43,126 +34,145 @@ namespace SimpleTransformer.Model
             _lastK = k;
             _lastV = v;
      
-            //Compute scores by matrix multiplication of q and kT
-            Tensor scores = TensorMath.MultiplyTransposeRight(q, k);
+            _workspace.CachedScores = EnsureShape(
+                _workspace.CachedScores,
+                q.Rows,
+                k.Rows);
+
+            _workspace.TransposedKeys = EnsureTransposeBuffer(
+                _workspace.TransposedKeys,
+                k);
+
+            //Transpose first and cache, then move on to multiply with transposed.            
+            TensorUtilities.TransposeInto(k,_workspace.TransposedKeys);
+
+            TensorMath.MatrixMultiplyWithRightTransposed(
+                q,
+                _workspace.TransposedKeys,
+                _workspace.CachedScores);
 
             //Scale scores in place by sqrt(headSize) and divide by sqrt(d) in place
-            TensorMath.ScaleInPlace(scores, 1.0f / MathF.Sqrt(_headSize));
+            TensorMath.ScaleInPlace(_workspace.CachedScores, 1.0f / MathF.Sqrt(_headSize));
 
             if(mask != null)
             {
-                if (mask.Rows != scores.Rows || mask.Cols != scores.Cols)
+                if (mask.Rows != _workspace.CachedScores.Rows || mask.Cols != _workspace.CachedScores.Cols)
                 {
                     throw new ArgumentException("Mask dimensions do not match attention scores.");
                 }
-                MaskUtilities.ApplyMaskInPlace(scores, mask);
+                MaskUtilities.ApplyMaskInPlace(_workspace.CachedScores, mask);
             }
 
-            TensorUtilities.SoftmaxRowsInPlace(scores);
+            TensorUtilities.SoftmaxRowsInPlace(_workspace.CachedScores);
 
             //Cache last weights after softmax without allocating new memory
-            _lastWeights = EnsureSameShape(_lastWeights, scores);
-            TensorUtilities.CopyTensor(scores, _lastWeights);
+            _workspace.LastWeights = EnsureSameShape(_workspace.LastWeights, _workspace.CachedScores);
+            TensorUtilities.CopyTensor(_workspace.CachedScores, _workspace.LastWeights);
 
-            return TensorMath.MatrixMultiply(scores, v);
+            _workspace.CachedOutput = EnsureShape(
+                _workspace.CachedOutput,
+                _workspace.CachedScores.Rows,
+                v.Cols);
+
+            TensorMath.MatrixMultiplyInto(
+                _workspace.CachedScores,
+                v,
+                _workspace.CachedOutput);
+
+            return _workspace.CachedOutput;
         }
         public (Tensor dQ, Tensor dK, Tensor dV) Backward(Tensor outputGradient)
         {
             if (_lastQ == null ||
                 _lastK == null ||
-                _lastV == null ||
-                _lastWeights == null)
+                _lastV == null )
             {
                 throw new InvalidOperationException(
                     "Forward must be called before Backward.");
             }
             // O = W V
-            _cachedWeights =
+            _workspace.CachedWeights =
                 EnsureTransposeBuffer(
-                    _cachedWeights,
-                    _lastWeights);
+                    _workspace.CachedWeights,
+                    _workspace.LastWeights);
 
             TensorUtilities.TransposeInto(
-                _lastWeights,
-                _cachedWeights);
+                _workspace.LastWeights,
+                _workspace.CachedWeights);
 
-            _cachedDV = EnsureShape(
-                _cachedDV,
+            _workspace.CachedDV = EnsureShape(
+                _workspace.CachedDV,
                 _lastV.Rows,
                 _lastV.Cols);
 
-            TensorMath.MatrixMultiply(
-                _cachedWeights,
+            TensorMath.MatrixMultiplyInto(
+                _workspace.CachedWeights,
                 outputGradient,
-                _cachedDV);
+                _workspace.CachedDV);
 
-            _cachedV =
+            _workspace.CachedV =
                 EnsureTransposeBuffer(
-                    _cachedV,
+                    _workspace.CachedV,
                     _lastV);
 
             TensorUtilities.TransposeInto(
                 _lastV,
-                _cachedV);
+                _workspace.CachedV);
 
-            _cachedDWeights =
+            _workspace.CachedDWeights =
                 EnsureShape(
-                    _cachedDWeights,
+                    _workspace.CachedDWeights,
                     outputGradient.Rows,
-                    _cachedV.Cols);
+                    _workspace.CachedV.Cols);
 
-            TensorMath.MatrixMultiply(
+            TensorMath.MatrixMultiplyInto(
                 outputGradient,
-                _cachedV,
-                _cachedDWeights);
-
-            Tensor dWeights = _cachedDWeights;
+                _workspace.CachedV,
+                _workspace.CachedDWeights);
                                     
             // Softmax derivative
-            _cachedDScores =
-                EnsureSameShape(_cachedDScores, dWeights);
+            _workspace.CachedDScores =
+                EnsureSameShape(_workspace.CachedDScores, _workspace.CachedDWeights);
 
             TensorUtilities.SoftmaxBackwardInto(
-                dWeights,
-                _lastWeights,
-                _cachedDScores);
-
-            Tensor dScores = _cachedDScores;
+                _workspace.CachedDWeights,
+                _workspace.LastWeights,
+                _workspace.CachedDScores);
 
             TensorMath.ScaleInPlace(
-                dScores,
+                _workspace.CachedDScores,
                 1f / MathF.Sqrt(_headSize));
 
-            _cachedDQ = EnsureShape(
-                _cachedDQ,
-                dScores.Rows,
+            _workspace.CachedDQ = EnsureShape(
+                _workspace.CachedDQ,
+                _workspace.CachedDScores.Rows,
                 _lastK.Cols);
 
-            TensorMath.MatrixMultiply(
-                dScores,
+            TensorMath.MatrixMultiplyInto(
+                _workspace.CachedDScores,
                 _lastK,
-                _cachedDQ);
+                _workspace.CachedDQ);
       
-            _cachedScores =
+            _workspace.CachedScores =
                 EnsureTransposeBuffer(
-                    _cachedScores,
-                    dScores);
+                    _workspace.CachedScores,
+                    _workspace.CachedDScores);
 
             TensorUtilities.TransposeInto(
-                dScores,
-                _cachedScores);
+                _workspace.CachedDScores,
+                _workspace.CachedScores);
 
-            _cachedDK = EnsureShape(
-                _cachedDK,
+            _workspace.CachedDK = EnsureShape(
+                _workspace.CachedDK,
                 _lastK.Rows,
                 _lastK.Cols);
 
-            TensorMath.MatrixMultiply(
-                _cachedScores,
+            TensorMath.MatrixMultiplyInto(
+                _workspace.CachedScores,
                 _lastQ,
-                _cachedDK);
+                _workspace.CachedDK);
             
-            return (_cachedDQ, _cachedDK, _cachedDV);
+            return (_workspace.CachedDQ, _workspace.CachedDK, _workspace.CachedDV);
         }
         private static Tensor EnsureTransposeBuffer(
             Tensor? buffer,
@@ -197,5 +207,20 @@ namespace SimpleTransformer.Model
 
             return buffer;
         }      
+    
+        private sealed class AttentionWorkspace
+        {
+            public Tensor CachedV = null!;
+            public Tensor CachedWeights = null!;
+            public Tensor CachedScores = null!;
+            public Tensor CachedDScores = null!;
+            public Tensor CachedDWeights = null!;
+            public Tensor CachedDQ = null!;
+            public Tensor CachedDV = null!;
+            public Tensor CachedDK = null!;
+            public Tensor LastWeights = null!;
+            public Tensor CachedOutput = null!;
+            public Tensor TransposedKeys = null!;
+        }
     }
 }

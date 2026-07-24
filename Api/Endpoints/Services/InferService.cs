@@ -1,20 +1,53 @@
 using SimpleTransformer.Api.Requests;
+using SimpleTransformer.Api.Responses;
+using SimpleTransformer.Model;
+using SimpleTransformer.Model.Extensions;
+using SimpleTransformer.Model.Tokenizer;
 
 namespace SimpleTransformer.Api.Endpoints.Services
 {
     public class InferService
     {
+        //Set up constructor DI for the service
+        private readonly ITokenizer _tokenizer;
+        private readonly TransformerModel _model;
+
+        public InferService(ITokenizer tokenizer, TransformerModel model)
+        {
+            _tokenizer = tokenizer;
+            _model = model;
+        }
         public async Task<ApiResponse<InferenceResponse>> Infer(InferenceRequest req)
         {
-            //Get the details from the incoming request, then send them to the model, and wait for it to respond.
+            //Validate: Input must not be empty or null, but the other two props do have auto properties assigned.
+            if(string.IsNullOrEmpty(req.InputText)) throw new ArgumentException("Input must not be empty or null.");
+
+            //Tokenize the input text
+
+            var tokens = _tokenizer.Encode(req.InputText);
+
+            //Create a tensor from the token ids
+            var tensor = TokenizationUtilities.FromTokenIds(tokens);
+
+            //Pass the tensor to the model
+            var prediction = _model.Predict(tensor);
+
+            //Convert the tensor to token ids
+            var tokenIds = TokenizationUtilities.ToTokenIds(prediction);
+
+            //Convert the token ids to text
+            var outputText = _tokenizer.Decode(tokenIds);
+
+            //Create the response
             
             //For now, this is not yet ready so we can return a response so that the endpoint is functional.
             var response = new ApiResponse<InferenceResponse>
             {
                 Status = ResponseStatus.Success,
+                StatusCode = 200,
                 Data = new InferenceResponse
                 {
-                    OutputText = "Hello World!"
+                    OutputText = string.IsNullOrEmpty(outputText) ? "Could not generate usable output from the tokens." : outputText
                 }
             };
 

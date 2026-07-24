@@ -1,10 +1,21 @@
 namespace SimpleTransformer.Model
 {
-    public class FeedForwardLayer : ILayer
+    public class FeedForwardLayer : ITrainableLayer
     {
         private readonly LinearLayer _expand;
         private readonly GeluLayer _activation;
         private readonly LinearLayer _project;
+        public IEnumerable<TrainableParameter> Parameters
+        {
+            get
+            {
+                foreach (var p in _expand.Parameters)
+                    yield return p;
+
+                foreach (var p in _project.Parameters)
+                    yield return p;
+            }
+        }
 
         public FeedForwardLayer(int embeddingSize, int hiddenSize)
         {
@@ -21,6 +32,19 @@ namespace SimpleTransformer.Model
 
             return x;
         }
-        public Tensor Backward(Tensor gradient) => throw new NotImplementedException();
+        public Tensor Backward(Tensor gradient)
+        {
+            Tensor x = _project.Backward(gradient);
+            x = _activation.Backward(x);
+            x = _expand.Backward(x);           
+
+            return x;
+        }
+
+        public void ZeroGradients()
+        {
+            _expand.ZeroGradients();
+            _project.ZeroGradients();
+        }
     }
 }

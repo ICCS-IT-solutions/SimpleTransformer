@@ -69,12 +69,13 @@ namespace SimpleTransformer.Model.Extensions
         {
             //Check that the two matrices have the same shape
             TensorUtilities.ValidateSameShape(a, b);
-
+            int rows = a.Rows;
+            int cols = a.Cols;
             //Perform an element-wise addition on the two matrices
-            var result = new Tensor(a.Rows, a.Cols);
-            for (int i = 0; i < a.Rows; i++)
+            var result = new Tensor(rows, cols);
+            for (int i = 0; i < rows; i++)
             {
-                for (int j = 0; j < a.Cols; j++)
+                for (int j = 0; j < cols; j++)
                 {
                     result[i, j] = a[i, j] + b[i, j];
                 }
@@ -87,12 +88,13 @@ namespace SimpleTransformer.Model.Extensions
         {
             //Check that the two matrices have the same shape
             TensorUtilities.ValidateSameShape(a, b);
-
+            int rows = a.Rows;
+            int cols = a.Cols;
             //Perform an element-wise subtraction on the two matrices
-            var result = new Tensor(a.Rows, a.Cols);
-            for (int i = 0; i < a.Rows; i++)
+            var result = new Tensor(rows, cols);
+            for (int i = 0; i < rows; i++)
             {
-                for (int j = 0; j < a.Cols; j++)
+                for (int j = 0; j < cols; j++)
                 {
                     result[i, j] = a[i, j] - b[i, j];
                 }
@@ -104,12 +106,13 @@ namespace SimpleTransformer.Model.Extensions
         {
             //Check that the two matrices have the same shape
             TensorUtilities.ValidateSameShape(a, b);
-
+            int rows = a.Rows;
+            int cols = a.Cols;
             //Perform an element-wise multiplication on the two matrices
-            var result = new Tensor(a.Rows, a.Cols);
-            for (int i = 0; i < a.Rows; i++)
+            var result = new Tensor(rows, cols);
+            for (int i = 0; i < rows; i++)
             {
-                for (int j = 0; j < a.Cols; j++)
+                for (int j = 0; j < cols; j++)
                 {
                     result[i, j] = a[i, j] * b[i, j];
                 }
@@ -122,11 +125,13 @@ namespace SimpleTransformer.Model.Extensions
             //Check that the two matrices have the same shape
             TensorUtilities.ValidateSameShape(a, b);
 
+            int rows = a.Rows;
+            int cols = a.Cols;
             //Perform an element-wise division on the two matrices
-            var result = new Tensor(a.Rows, a.Cols);
-            for (int i = 0; i < a.Rows; i++)
+            var result = new Tensor(rows, cols);
+            for (int i = 0; i < rows; i++)
             {
-                for (int j = 0; j < a.Cols; j++)
+                for (int j = 0; j < cols; j++)
                 {
                     if(b[i, j] == 0.0f) throw new DivideByZeroException("Cannot divide by zero.");
                     result[i, j] = a[i, j] / b[i, j]; 
@@ -135,15 +140,91 @@ namespace SimpleTransformer.Model.Extensions
             return result;
         }
 
+        //Performs element-wise addition on two inputs and stores the result in the third input
+        public static void ElementWiseAddInto(
+            Tensor a,
+            Tensor b,
+            Tensor result)
+        {
+            TensorUtilities.ValidateSameShape(a, b);
+            TensorUtilities.ValidateSameShape(a, result);
+
+            float[] A = a.Data;
+            float[] B = b.Data;
+            float[] C = result.Data;
+
+            int length = C.Length;
+
+            for (int i = 0; i < length; i++)
+            {
+                C[i] = A[i] + B[i];
+            }
+        }
+
+        public static void ElementWiseSubtractInto(Tensor a, Tensor b, Tensor result)
+        {
+            TensorUtilities.ValidateSameShape(a, b);
+            TensorUtilities.ValidateSameShape(a, result);
+
+            float[] A = a.Data;
+            float[] B = b.Data;
+            float[] C = result.Data;
+
+            int length = C.Length;
+
+            for (int i = 0; i < length; i++)
+            {
+                C[i] = A[i] - B[i];
+            }
+        }
+
+        public static void ElementWiseMultiplyInto(Tensor a, Tensor b, Tensor result)
+        {
+            TensorUtilities.ValidateSameShape(a, b);
+            TensorUtilities.ValidateSameShape(a, result);
+
+            float[] A = a.Data;
+            float[] B = b.Data;
+            float[] C = result.Data;
+
+            int length = C.Length;
+
+            for (int i = 0; i < length; i++)
+            {
+                C[i] = A[i] * B[i];
+            }
+        }
+
+        public static void ElementWiseDivideInto(Tensor a, Tensor b, Tensor result)
+        {
+            TensorUtilities.ValidateSameShape(a, b);
+            TensorUtilities.ValidateSameShape(a, result);
+
+            float[] A = a.Data;
+            float[] B = b.Data;
+            float[] C = result.Data;
+
+            int length = C.Length;
+
+            for (int i = 0; i < length; i++)
+            {
+                C[i] = A[i] / B[i];
+            }
+        }
+                
+
         //Enhancement: Added in-place versions of the above methods. 
         //These will become profoundly useful when I need to perform in-place mutations.
         public static void ElementWiseAddInPlace(Tensor a, Tensor b)
         {
             TensorUtilities.ValidateSameShape(a, b);
 
-            for (int i = 0; i < a.Rows; i++)
+            int rows = a.Rows;
+            int cols = a.Cols;
+
+            for (int i = 0; i < rows; i++)
             {
-                for (int j = 0; j < a.Cols; j++)
+                for (int j = 0; j < cols; j++)
                 {
                     a[i, j] += b[i, j];
                 }
@@ -154,9 +235,12 @@ namespace SimpleTransformer.Model.Extensions
         {
             TensorUtilities.ValidateSameShape(a, b);
 
-            for (int i = 0; i < a.Rows; i++)
+            int rows = a.Rows;
+            int cols = a.Cols;
+
+            for (int i = 0; i < rows; i++)
             {
-                for (int j = 0; j < a.Cols; j++)
+                for (int j = 0; j < cols; j++)
                 {
                     a[i, j] -= b[i, j];
                 }
@@ -167,9 +251,12 @@ namespace SimpleTransformer.Model.Extensions
         {
             TensorUtilities.ValidateSameShape(a, b);
 
-            for (int i = 0; i < a.Rows; i++)
+            int rows = a.Rows;
+            int cols = a.Cols;
+
+            for (int i = 0; i < rows; i++)
             {
-                for (int j = 0; j < a.Cols; j++)
+                for (int j = 0; j < cols; j++)
                 {
                     a[i, j] *= b[i, j];
                 }
@@ -179,10 +266,12 @@ namespace SimpleTransformer.Model.Extensions
         public static void ElementWiseDivideInPlace(Tensor a, Tensor b)
         {
             TensorUtilities.ValidateSameShape(a, b);
+            int rows = a.Rows;
+            int cols = a.Cols;
 
-            for (int i = 0; i < a.Rows; i++)
+            for (int i = 0; i < rows; i++)
             {
-                for (int j = 0; j < a.Cols; j++)
+                for (int j = 0; j < cols; j++)
                 {
                     if (b[i, j] == 0.0f) throw new DivideByZeroException("Cannot divide by zero.");
                     a[i, j] /= b[i, j];
@@ -196,37 +285,12 @@ namespace SimpleTransformer.Model.Extensions
         #region Matrix Multiplication
         public static Tensor MatrixMultiply(Tensor a, Tensor b)
         {
-            if (a.Rank != 2)
-                throw new ArgumentException("Left operand must be a matrix.");
-
-            if (b.Rank != 2)
-                throw new ArgumentException("Right operand must be a matrix.");
-
-            if (a.Cols != b.Rows)
-                throw new ArgumentException(
-                    $"Cannot multiply ({a.Rows}x{a.Cols}) by ({b.Rows}x{b.Cols}).");
-
             var result = new Tensor(a.Rows, b.Cols);
-
-            //Cache the input variables
-            int rows = a.Rows, cols = b.Cols, inner = a.Cols;
-            
-            for (int i = 0; i < rows; i++)
-            {
-                for (int j = 0; j < cols; j++)
-                {
-                    float sum = 0.0f;
-                    for (int k = 0; k < inner; k++)
-                    {
-                        sum += a[i, k] * b[k, j];
-                    }
-                    result[i, j] = sum;
-                }
-            }
+            MatrixMultiplyInto(a, b, result);
             return result;
         }
 
-        public static void MatrixMultiply(Tensor a, Tensor b, Tensor result)
+        public static void MatrixMultiplyInto(Tensor a, Tensor b, Tensor result)
         {
             if (a.Rank != 2)
                 throw new ArgumentException("Left operand must be a matrix.");
@@ -244,35 +308,84 @@ namespace SimpleTransformer.Model.Extensions
             {
                 throw new ArgumentException(
                     "Destination tensor has incorrect dimensions.");
-            }
+            }    
 
-            //Cache the input variables
-            int rows = a.Rows, cols = b.Cols, inner = a.Cols;
-            
-            for (int i = 0; i < rows; i++)
+            float[] A = a.Data;
+            float[] B = b.Data;
+            float[] C = result.Data;
+
+            //Cache the input dimensions locally.
+            int m = a.Rows;
+            int n = b.Cols;
+            int k = a.Cols;    
+
+            for (int i = 0; i < m; i++)
             {
-                for (int j = 0; j < cols; j++)
+                int aRow = i * k;
+                int cRow = i * n;
+
+                for (int j = 0; j < n; j++)
                 {
-                    float sum = 0.0f;
-                    for (int k = 0; k < inner; k++)
+                    float sum = 0f;
+                    int bIndex = j;
+
+                    for (int p = 0; p < k; p++)
                     {
-                        sum += a[i, k] * b[k, j];
+                        sum += A[aRow + p] * B[bIndex];
+                        bIndex += n;
                     }
-                    result[i, j] = sum;
+
+                    C[cRow + j] = sum;
                 }
             }
         }
 
-        //Multiply against the transposed matrix. 
+        //Transpose then multiply against an input matrix. 
         public static Tensor MultiplyTransposeRight(Tensor a, Tensor b)
         {
             return MatrixMultiply(a, TensorUtilities.Transpose(b));
         }
 
-        //Not sure if I need left transpose but one never knows...
+        public static void MultiplyTransposeRightInto(
+            Tensor a,
+            Tensor b,
+            Tensor transposeBuffer,
+            Tensor result)
+        {
+            TensorUtilities.TransposeInto(b, transposeBuffer);
+            MatrixMultiplyInto(a, transposeBuffer, result);
+        }
+                
         public static Tensor MultiplyTransposeLeft(Tensor a, Tensor b)
         {
             return MatrixMultiply(TensorUtilities.Transpose(a), b);
+        }
+
+        public static void MultiplyTransposeLeftInto(
+            Tensor a,
+            Tensor b,
+            Tensor transposeBuffer,
+            Tensor result)
+        {
+            TensorUtilities.TransposeInto(a, transposeBuffer);
+            MatrixMultiplyInto(transposeBuffer, b, result);
+        }
+
+        //Works against a cached right transposed matrix - this does not perform the transpose.
+        public static void MatrixMultiplyWithRightTransposed(
+            Tensor a,
+            Tensor transposedB,
+            Tensor result)
+        {
+            MatrixMultiplyInto(a, transposedB, result);
+        }
+        //Works against a cached left transposed matrix - this does not perform the transpose.
+        public static void MatrixMultiplyWithLeftTransposed(
+            Tensor transposedA,
+            Tensor b,
+            Tensor result)
+        {
+            MatrixMultiplyInto(transposedA, b, result);
         }
 
         #endregion
@@ -289,15 +402,65 @@ namespace SimpleTransformer.Model.Extensions
         {
             const float sqrt2OverPi = 0.7978845608f;
 
-            for (int i = 0; i < tensor.Length; i++)
-            {
-                float x = tensor.Data[i];
-                float x3 = x * x * x;
+            float[] data = tensor.Data;
+            int length = data.Length;
 
-                tensor.Data[i] =
-                    0.5f * x *
-                    (1f + MathF.Tanh(
-                        sqrt2OverPi * (x + 0.044715f * x3)));
+            for (int i = 0; i < length; i++)
+            {
+                float x = data[i];
+
+                float x2 = x * x;
+                float x3 = x2 * x;
+
+                float u =
+                    sqrt2OverPi *
+                    (x + 0.044715f * x3);
+
+                float t = MathF.Tanh(u);
+
+                data[i] =
+                    0.5f * x * (1f + t);
+            }
+        }
+
+        public static void GeluBackwardInto(
+            Tensor input,
+            Tensor outputGradient,
+            Tensor inputGradient)
+        {
+            TensorUtilities.ValidateSameShape(input, outputGradient);
+            TensorUtilities.ValidateSameShape(input, inputGradient);
+
+            const float sqrt2OverPi = 0.7978845608f;
+
+            float[] x = input.Data;
+            float[] dy = outputGradient.Data;
+            float[] dx = inputGradient.Data;
+
+            int length = x.Length;
+
+            for (int i = 0; i < length; i++)
+            {
+                float value = x[i];
+
+                float x2 = value * value;
+                float x3 = x2 * value;
+
+                float u =
+                    sqrt2OverPi *
+                    (value + 0.044715f * x3);
+
+                float t = MathF.Tanh(u);
+
+                float derivative =
+                    0.5f * (1f + t)
+                    +
+                    0.5f * value
+                    * (1f - t * t)
+                    * sqrt2OverPi
+                    * (1f + 3f * 0.044715f * x2);
+
+                dx[i] = dy[i] * derivative;
             }
         }
 

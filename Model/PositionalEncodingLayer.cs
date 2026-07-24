@@ -38,8 +38,10 @@ namespace SimpleTransformer.Model
 
         public Tensor Backward(Tensor gradient)
         {
-            //Not yet implemented.
-            throw new NotImplementedException();
+            if (gradient.Rank != 2)
+                throw new ArgumentException("Gradient must be a matrix.");
+
+            return gradient.Clone();
         }
     }
 }

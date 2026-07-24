@@ -4,7 +4,7 @@ namespace SimpleTransformer.Model
 {
     public interface IOptimizer
     {
-        void Step(IEnumerable<ITrainableLayer> layers);
+        void Step(IEnumerable<TrainableParameter> layers);
     }
 
     public class AdamOptimizer : IOptimizer
@@ -15,7 +15,7 @@ namespace SimpleTransformer.Model
         {
             _learningRate = learningRate;
         }
-        public void Step(IEnumerable<ITrainableLayer> layers)
+        public void Step(IEnumerable<TrainableParameter> layers)
         {
             
         }

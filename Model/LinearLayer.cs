@@ -54,17 +54,16 @@ namespace SimpleTransformer.Model
         private void InitWeights()
         {
             float limit = MathF.Sqrt(6.0f/(_inputSize + _outputSize));
-            
-            for (int i = 0; i < _weights.Data.Length; i++)
-            {    
-                _weights.Data[i] = (float)_random.NextDouble() * 2 * limit - limit;
-            }
+
+            TensorUtilities.FillRandom(
+                _weights,
+                _random,
+                -limit,
+                limit);
+
             if(_useBias)
             {
-                for (int i = 0; i < _bias!.Data.Length; i++)
-                {
-                    _bias.Data[i] = 0.0f;
-                }
+                Array.Clear(_bias!.Data);
             }
         }
 
@@ -128,7 +127,7 @@ namespace SimpleTransformer.Model
                 _cachedGradient);
 
                
-            TensorMath.MatrixMultiply(
+            TensorMath.MatrixMultiplyInto(
                 _cachedGradient,
                 input, _weightGradient);
 

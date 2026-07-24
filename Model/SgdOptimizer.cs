@@ -8,16 +8,16 @@ namespace SimpleTransformer.Model
             _learningRate = learningRate;
         }
 
-        public void Step(IEnumerable<ITrainableLayer> layers)
+        public void Step(IEnumerable<TrainableParameter> parameters)
         {
-            foreach (var layer in layers)
+            foreach (var param in parameters)
             {
-                foreach (var param in layer.Parameters)
+                float[] values = param.Value.Data;
+                float[] gradients = param.Gradient.Data;
+
+                for (int i = 0; i < values.Length; i++)
                 {
-                    for (int i = 0; i < param.Value.Length; i++)
-                    {
-                        param.Value.Data[i] -= _learningRate * param.Gradient.Data[i];
-                    }
+                    values[i] -= _learningRate * gradients[i];
                 }
             }
         }

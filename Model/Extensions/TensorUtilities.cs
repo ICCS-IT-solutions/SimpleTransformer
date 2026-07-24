@@ -54,6 +54,7 @@ namespace SimpleTransformer.Model.Extensions
 
         #endregion
  #region Utilities
+
         public static void CopyVector(ReadOnlySpan<float> src, Span<float> dst)
         {
             //Make sure the source and destination have the same length
@@ -66,11 +67,54 @@ namespace SimpleTransformer.Model.Extensions
 
         public static void CopyTensor(Tensor src, Tensor dst)
         {
-            //Make sure the source and destination have the same shape
-            ValidateSameShape(src, dst);
+            if(src.Length != dst.Length) throw new ArgumentException("Source and destination tensors must have the same length.");
+
+            if(!src.Shape.AsSpan().SequenceEqual(dst.Shape.AsSpan())) throw new ArgumentException("Source and destination tensors must have the same shape.");
 
             //Copy the source to the destination
             Array.Copy(src.Data, dst.Data, src.Data.Length);
+        }
+
+        public static Tensor SliceColumns(
+            Tensor source,
+            int startColumn,
+            int columnCount)
+        {
+            var result =
+                new Tensor(source.Rows, columnCount);
+
+            TensorUtilities.CopyColumnRangeInto(
+                source,
+                result,
+                startColumn);
+
+            return result;
+        }
+
+        public static void CopyColumnRangeInto(
+            Tensor source,
+            Tensor destination,
+            int startColumn)
+        {
+            if (source.Rank != 2 || destination.Rank != 2)
+                throw new ArgumentException("Both tensors must be matrices.");
+
+            if (destination.Rows != source.Rows)
+                throw new ArgumentException("Row counts must match.");
+
+            if (startColumn < 0 ||
+                startColumn + destination.Cols > source.Cols)
+                throw new ArgumentOutOfRangeException(nameof(startColumn));
+
+            for (int row = 0; row < source.Rows; row++)
+            {
+                Array.Copy(
+                    source.Data,
+                    row * source.Cols + startColumn,
+                    destination.Data,
+                    row * destination.Cols,
+                    destination.Cols);
+            }
         }
 
         public static Tensor ConcatenateColumns(IReadOnlyList<Tensor> tensors) => ConcatenateColumns(tensors.AsEnumerable());
@@ -257,7 +301,8 @@ namespace SimpleTransformer.Model.Extensions
 
             var result = new Tensor(matrix.Rows, matrix.Cols);
 
-            for (int row = 0; row < matrix.Rows; row++)
+            int rows = matrix.Rows;
+            for (int row = 0; row < rows; row++)
             {
                 RowUtilities.GetRow(matrix, row).CopyTo(RowUtilities.GetWritableRow(result, row));
             }
@@ -274,7 +319,8 @@ namespace SimpleTransformer.Model.Extensions
             ValidateSameShape(softmaxOutput, outputGradient);
             ValidateSameShape(softmaxOutput, inputGradient);
 
-            for (int row = 0; row < softmaxOutput.Rows; row++)
+            int rows = softmaxOutput.Rows;
+            for (int row = 0; row < rows; row++)
             {
                 SoftmaxBackwardInPlace(
                     RowUtilities.GetRow(softmaxOutput, row),
@@ -289,7 +335,9 @@ namespace SimpleTransformer.Model.Extensions
             if (matrix.Rank != 2)
                 throw new ArgumentException("Input must be a matrix.");
 
-            for (int row = 0; row < matrix.Rows; row++)
+            int rows = matrix.Rows;
+
+            for (int row = 0; row < rows; row++)
             {
                 SoftmaxInPlace(RowUtilities.GetWritableRow(matrix, row));
             }
@@ -324,12 +372,18 @@ namespace SimpleTransformer.Model.Extensions
                 throw new ArgumentException(
                     $"Destination must have shape ({source.Cols}, {source.Rows}).");
             }
+            var src = source.Data;
+            var dst = destination.Data; 
 
-            for (int row = 0; row < source.Rows; row++)
+            int rows = source.Rows;
+            int cols = source.Cols;
+            for (int r = 0; r < rows; r++)
             {
-                for (int col = 0; col < source.Cols; col++)
+                int srcRow = r * cols;
+
+                for (int c = 0; c < cols; c++)
                 {
-                    destination[col, row] = source[row, col];
+                    dst[c * rows + r] = src[srcRow + c];
                 }
             }
         }
