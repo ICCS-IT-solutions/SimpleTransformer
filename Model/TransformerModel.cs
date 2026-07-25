@@ -87,13 +87,13 @@ namespace SimpleTransformer.Model
             gradient = _embedding.Backward(gradient);
         }
 
-        public int[] Predict(Tensor input)
+        public (int[], Tensor) Predict(Tensor input)
         {
             var logits = Forward(input);
 
             var probabilities = TensorUtilities.SoftmaxRows(logits);
 
-            return TokenizationUtilities.ArgMax(probabilities);
+            return (TokenizationUtilities.ArgMax(probabilities), logits);
         }
 
         public void ZeroGradients()
