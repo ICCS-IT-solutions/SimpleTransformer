@@ -35,6 +35,7 @@ namespace SimpleTransformer.Model
         
         public static TransformerConfig DefaultConfig => new TransformerConfig
         {
+            
             VocabSize = 30522, // Common vocabulary size for BERT-like models
             EmbeddingSize = 768, // Common embedding size for BERT-like models
             NumLayers = 12, // Common number of layers for BERT-like models
@@ -58,7 +59,7 @@ namespace SimpleTransformer.Model
             BuildModel();
             Log.Information("Transformer model ready to be loaded.");
         }
-        private Tensor Forward(Tensor input)
+        private (Tensor logits, Tensor hiddenState) Forward(Tensor input)
         {
             Tensor x = _embedding.Forward(input);
 
@@ -69,9 +70,11 @@ namespace SimpleTransformer.Model
                 x = layer.Forward(x);
             }
 
-            x = _outputProjection.Forward(x);
+            Tensor hiddenState = x;
 
-            return x;
+            Tensor logits = _outputProjection.Forward(hiddenState);
+
+            return (logits, hiddenState);
         }
 
         public void Backward(Tensor gradient)
@@ -87,13 +90,13 @@ namespace SimpleTransformer.Model
             gradient = _embedding.Backward(gradient);
         }
 
-        public (int[], Tensor) Predict(Tensor input)
+        public (int[] tokens, Tensor logits, Tensor probabilities, Tensor hiddenState) Predict(Tensor input)
         {
-            var logits = Forward(input);
+            var (logits, hiddenState) = Forward(input);
 
             var probabilities = TensorUtilities.SoftmaxRows(logits);
 
-            return (TokenizationUtilities.ArgMax(probabilities), logits);
+            return (TokenizationUtilities.ArgMax(probabilities), logits, probabilities, hiddenState);
         }
 
         public void ZeroGradients()
@@ -140,7 +143,8 @@ namespace SimpleTransformer.Model
         {
             ZeroGradients();
 
-            Tensor prediction = Forward(inputs);
+            //Only want the prediction/logits here for now, so we can ignore the hidden state.
+            (Tensor prediction, _) = Forward(inputs);
 
             float loss =
                 _loss.Forward(prediction, expectedOutputs);

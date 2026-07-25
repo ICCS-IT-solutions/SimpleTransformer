@@ -15,12 +15,9 @@ namespace SimpleTransformer
                     "logs/server-.log",
                     rollingInterval: RollingInterval.Day)
                 .CreateLogger();
-            //If using custom config, pass it in here. 
-            //For now use the default config.
-            var model = new TransformerModel();
 
             //Inject the model via constructor DI 
-            var server = new Server(model);
+            var server = new Server();
             
             //Start the server
             server.Start();

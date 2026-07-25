@@ -2,12 +2,14 @@ namespace SimpleTransformer.Api
 {
     public class ApiResponse<D>
     {
+        public string Message { get; set; } = string.Empty;
         public D? Data { get; set; }
         public int StatusCode { get; set; }
         public ResponseStatus Status { get; set; }
     }
     public class ApiResponseWithMetadata<D, M>
     {
+        public string Message { get; set; } = string.Empty;
         public D? Data { get; set; }
         public int StatusCode { get; set; }
         public ResponseStatus Status { get; set; }

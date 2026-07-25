@@ -5,6 +5,7 @@ namespace SimpleTransformer.Api.Responses
     {
         Success = 0,
         Failure = 1,
-        Error = 2
+        Error = 2,
+        Unknown = 3
     }
 }

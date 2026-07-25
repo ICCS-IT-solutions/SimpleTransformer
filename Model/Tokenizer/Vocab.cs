@@ -4,8 +4,7 @@ namespace SimpleTransformer.Model.Tokenizer
 {
     public class VocabularyBuilder
     {
-        public Vocabulary Build(
-            IEnumerable<string> documents)
+        public Vocabulary Build(IEnumerable<string> documents)
         {
             var tokenToId = new Dictionary<string, int>
             {
@@ -15,7 +14,7 @@ namespace SimpleTransformer.Model.Tokenizer
                 [SpecialTokens.EndOfSequence] = 3,
                 [SpecialTokens.Mask] = 4
             };
-            
+
             int nextId = tokenToId.Count;
 
             foreach (string document in documents)

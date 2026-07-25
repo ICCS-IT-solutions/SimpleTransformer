@@ -8,11 +8,6 @@ namespace SimpleTransformer.Api
     //This will be where I create a rest API backend server
     public class Server
     {
-        private TransformerModel _model;
-        public Server(TransformerModel model)
-        {
-            _model = model;
-        }
         public void Start()
         {
             try
@@ -21,9 +16,7 @@ namespace SimpleTransformer.Api
 
                 builder.Host.UseSerilog();
 
-                Log.Information("Loading transformer model...");
-                //Start a timer to track how long it takes to load the model.
-                var watch = System.Diagnostics.Stopwatch.StartNew();
+
 
                 builder.WebHost.ConfigureKestrel(options =>
                 {
@@ -35,28 +28,58 @@ namespace SimpleTransformer.Api
                 builder.Services.AddEndpointsApiExplorer();
 
                 builder.Services.AddSwaggerGen();
-                //Will replace this with a proper transient or loaded vocab from a json file once I have one.
+                //Add services to the container.
                 builder.Services.AddSingleton<Vocabulary>(provider =>
                 {
-                    var builder = new VocabularyBuilder();
-                    return builder.Build(new[]
-                    {
-                        "The quick brown fox jumps over the lazy dog.",
-                    });
+                    const string vocabularyFile = "vocabulary.json";
+
+                    //Check that the vocab file actually exists:
+                    if(!File.Exists(vocabularyFile)) throw new FileNotFoundException("Vocabulary file not found.", vocabularyFile);
+
+                    var loader = new JsonVocabularyLoader();
+                    return loader.LoadFromFile(vocabularyFile);
                 });
+
+                
+                builder.Services.AddScoped<VocabularyService>();
+                //Will replace this with a proper transient or loaded vocab from a json file once I have one.
 
                 builder.Services.AddSingleton<ITokenizer>(provider =>
                 {
                     var vocab = provider.GetRequiredService<Vocabulary>();
                     return new SimpleTokenizer(vocab);
                 });
-                builder.Services.AddSingleton<TransformerModel>(_model);
+                builder.Services.AddSingleton<TransformerModel>(provider =>
+                {
+                    Log.Information("Instantiating vocabulary and model...");
+                    //Start a timer to track how long it takes to load the model.
+                    var watch = System.Diagnostics.Stopwatch.StartNew();
+                    Log.Information("Loading vocabulary...");
+                    var vocabulary = provider.GetRequiredService<Vocabulary>();
+                    Log.Information($"Vocabulary loaded in {watch.ElapsedMilliseconds}ms.");
 
-
-                Log.Information($"Transformer model loaded in {watch.ElapsedMilliseconds}ms.");
-                watch.Stop();
-
-                //Add services to the container.
+                    watch.Restart();
+                    Log.Information("Building transformer model...");
+                    var config = new TransformerConfig
+                    {
+                        VocabSize = vocabulary.Count,
+                        EmbeddingSize = 768,
+                        NumLayers = 12,
+                        NumHeads = 12,
+                        FeedForwardSize = 3072,
+                        MaxSequenceLength = 512,
+                        LearningRate = 0.001f,
+                        BatchSize = 8,
+                        Epochs = 10,
+                        DropoutRate = 0.1f
+                    };
+                    var model = new TransformerModel(config);
+                    Log.Information($"Transformer model loaded in {watch.ElapsedMilliseconds}ms.");
+                    watch.Stop();
+                    return model;  
+                });
+                
+                //Services using the model should be created after the model is ready.
                 builder.Services.AddScoped<InferService>();
 
                 var app = builder.Build();
@@ -71,7 +94,7 @@ namespace SimpleTransformer.Api
                 Log.Information("Listening for requests...");
 
                 app.MapControllers();
-                
+
                 app.Run();    
             }
             catch (Exception ex)
