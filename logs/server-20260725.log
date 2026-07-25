@@ -1,0 +1,367 @@
+2026-07-25 10:29:41.975 +02:00 [INF] Configuration is valid. Proceeding...
+2026-07-25 10:29:42.856 +02:00 [INF] Current configuration:
+Vocabulary size: 30522
+Embedding size: 768
+Number of layers: 12
+Number of heads: 12
+Maximum sequence length: 512
+Feed forward size: 3072
+2026-07-25 10:29:42.857 +02:00 [INF] Constructing transformer architecture. Please stand by...
+2026-07-25 10:29:42.908 +02:00 [INF] Layer 0: Attention layer constructed in 48ms.
+2026-07-25 10:29:43.011 +02:00 [INF] Layer 0: Feed forward layer constructed in 101ms.
+2026-07-25 10:29:43.015 +02:00 [INF] Layer 0: Layer norm 1 constructed in 2ms.
+2026-07-25 10:29:43.016 +02:00 [INF] Layer 0: Layer norm 2 constructed in 0ms.
+2026-07-25 10:29:43.017 +02:00 [INF] Layer 0 constructed in 160ms. Total elapsed: 160ms.
+2026-07-25 10:29:43.062 +02:00 [INF] Layer 1: Attention layer constructed in 44ms.
+2026-07-25 10:29:43.151 +02:00 [INF] Layer 1: Feed forward layer constructed in 87ms.
+2026-07-25 10:29:43.151 +02:00 [INF] Layer 1: Layer norm 1 constructed in 0ms.
+2026-07-25 10:29:43.152 +02:00 [INF] Layer 1: Layer norm 2 constructed in 0ms.
+2026-07-25 10:29:43.152 +02:00 [INF] Layer 1 constructed in 134ms. Total elapsed: 295ms.
+2026-07-25 10:29:43.196 +02:00 [INF] Layer 2: Attention layer constructed in 43ms.
+2026-07-25 10:29:43.285 +02:00 [INF] Layer 2: Feed forward layer constructed in 88ms.
+2026-07-25 10:29:43.286 +02:00 [INF] Layer 2: Layer norm 1 constructed in 0ms.
+2026-07-25 10:29:43.286 +02:00 [INF] Layer 2: Layer norm 2 constructed in 0ms.
+2026-07-25 10:29:43.287 +02:00 [INF] Layer 2 constructed in 133ms. Total elapsed: 429ms.
+2026-07-25 10:29:43.331 +02:00 [INF] Layer 3: Attention layer constructed in 43ms.
+2026-07-25 10:29:43.417 +02:00 [INF] Layer 3: Feed forward layer constructed in 85ms.
+2026-07-25 10:29:43.418 +02:00 [INF] Layer 3: Layer norm 1 constructed in 0ms.
+2026-07-25 10:29:43.419 +02:00 [INF] Layer 3: Layer norm 2 constructed in 0ms.
+2026-07-25 10:29:43.419 +02:00 [INF] Layer 3 constructed in 132ms. Total elapsed: 562ms.
+2026-07-25 10:29:43.462 +02:00 [INF] Layer 4: Attention layer constructed in 42ms.
+2026-07-25 10:29:43.548 +02:00 [INF] Layer 4: Feed forward layer constructed in 84ms.
+2026-07-25 10:29:43.549 +02:00 [INF] Layer 4: Layer norm 1 constructed in 0ms.
+2026-07-25 10:29:43.550 +02:00 [INF] Layer 4: Layer norm 2 constructed in 0ms.
+2026-07-25 10:29:43.551 +02:00 [INF] Layer 4 constructed in 130ms. Total elapsed: 693ms.
+2026-07-25 10:29:43.607 +02:00 [INF] Layer 5: Attention layer constructed in 55ms.
+2026-07-25 10:29:43.693 +02:00 [INF] Layer 5: Feed forward layer constructed in 85ms.
+2026-07-25 10:29:43.694 +02:00 [INF] Layer 5: Layer norm 1 constructed in 0ms.
+2026-07-25 10:29:43.695 +02:00 [INF] Layer 5: Layer norm 2 constructed in 0ms.
+2026-07-25 10:29:43.696 +02:00 [INF] Layer 5 constructed in 144ms. Total elapsed: 838ms.
+2026-07-25 10:29:43.738 +02:00 [INF] Layer 6: Attention layer constructed in 41ms.
+2026-07-25 10:29:43.823 +02:00 [INF] Layer 6: Feed forward layer constructed in 84ms.
+2026-07-25 10:29:43.824 +02:00 [INF] Layer 6: Layer norm 1 constructed in 0ms.
+2026-07-25 10:29:43.825 +02:00 [INF] Layer 6: Layer norm 2 constructed in 0ms.
+2026-07-25 10:29:43.825 +02:00 [INF] Layer 6 constructed in 129ms. Total elapsed: 968ms.
+2026-07-25 10:29:43.868 +02:00 [INF] Layer 7: Attention layer constructed in 41ms.
+2026-07-25 10:29:43.955 +02:00 [INF] Layer 7: Feed forward layer constructed in 85ms.
+2026-07-25 10:29:43.956 +02:00 [INF] Layer 7: Layer norm 1 constructed in 0ms.
+2026-07-25 10:29:43.956 +02:00 [INF] Layer 7: Layer norm 2 constructed in 0ms.
+2026-07-25 10:29:43.957 +02:00 [INF] Layer 7 constructed in 131ms. Total elapsed: 1100ms.
+2026-07-25 10:29:44.001 +02:00 [INF] Layer 8: Attention layer constructed in 43ms.
+2026-07-25 10:29:44.108 +02:00 [INF] Layer 8: Feed forward layer constructed in 105ms.
+2026-07-25 10:29:44.108 +02:00 [INF] Layer 8: Layer norm 1 constructed in 0ms.
+2026-07-25 10:29:44.109 +02:00 [INF] Layer 8: Layer norm 2 constructed in 0ms.
+2026-07-25 10:29:44.110 +02:00 [INF] Layer 8 constructed in 151ms. Total elapsed: 1253ms.
+2026-07-25 10:29:44.153 +02:00 [INF] Layer 9: Attention layer constructed in 41ms.
+2026-07-25 10:29:44.251 +02:00 [INF] Layer 9: Feed forward layer constructed in 97ms.
+2026-07-25 10:29:44.252 +02:00 [INF] Layer 9: Layer norm 1 constructed in 0ms.
+2026-07-25 10:29:44.253 +02:00 [INF] Layer 9: Layer norm 2 constructed in 0ms.
+2026-07-25 10:29:44.253 +02:00 [INF] Layer 9 constructed in 142ms. Total elapsed: 1396ms.
+2026-07-25 10:29:44.296 +02:00 [INF] Layer 10: Attention layer constructed in 41ms.
+2026-07-25 10:29:44.382 +02:00 [INF] Layer 10: Feed forward layer constructed in 85ms.
+2026-07-25 10:29:44.383 +02:00 [INF] Layer 10: Layer norm 1 constructed in 0ms.
+2026-07-25 10:29:44.383 +02:00 [INF] Layer 10: Layer norm 2 constructed in 0ms.
+2026-07-25 10:29:44.384 +02:00 [INF] Layer 10 constructed in 129ms. Total elapsed: 1527ms.
+2026-07-25 10:29:44.426 +02:00 [INF] Layer 11: Attention layer constructed in 41ms.
+2026-07-25 10:29:44.511 +02:00 [INF] Layer 11: Feed forward layer constructed in 83ms.
+2026-07-25 10:29:44.511 +02:00 [INF] Layer 11: Layer norm 1 constructed in 0ms.
+2026-07-25 10:29:44.512 +02:00 [INF] Layer 11: Layer norm 2 constructed in 0ms.
+2026-07-25 10:29:44.513 +02:00 [INF] Layer 11 constructed in 128ms. Total elapsed: 1655ms.
+2026-07-25 10:29:44.514 +02:00 [INF] Transformer architecture initialisation completed in 1656ms.
+2026-07-25 10:29:44.514 +02:00 [INF] Transformer model ready to be loaded.
+2026-07-25 10:29:45.206 +02:00 [INF] Loading transformer model...
+2026-07-25 10:29:45.333 +02:00 [INF] Transformer model loaded in 125ms.
+2026-07-25 10:29:45.412 +02:00 [INF] REST API ready.
+2026-07-25 10:29:45.415 +02:00 [INF] Listening for requests...
+2026-07-25 10:29:45.636 +02:00 [INF] Now listening on: http://[::]:5000
+2026-07-25 10:29:45.639 +02:00 [INF] Application started. Press Ctrl+C to shut down.
+2026-07-25 10:29:45.640 +02:00 [INF] Hosting environment: Production
+2026-07-25 10:29:45.641 +02:00 [INF] Content root path: C:\Users\Iain\vscode\llm\SimpleTransformer\SimpleTransformer
+2026-07-25 10:30:01.449 +02:00 [INF] Request starting HTTP/1.1 POST http://127.0.0.1:5000/api/v1/infer - application/json 87
+2026-07-25 10:30:01.467 +02:00 [INF] Executing endpoint 'SimpleTransformer.Api.Endpoints.Controllers.InferController.Infer (SimpleTransformer)'
+2026-07-25 10:30:01.530 +02:00 [INF] Route matched with {action = "Infer", controller = "Infer"}. Executing controller action with signature System.Threading.Tasks.Task`1[SimpleTransformer.Api.ApiResponse`1[SimpleTransformer.Api.Responses.InferenceResponse]] Infer(SimpleTransformer.Api.Requests.InferenceRequest) on controller SimpleTransformer.Api.Endpoints.Controllers.InferController (SimpleTransformer).
+2026-07-25 10:30:21.179 +02:00 [INF] Executed action SimpleTransformer.Api.Endpoints.Controllers.InferController.Infer (SimpleTransformer) in 19642.9026ms
+2026-07-25 10:30:21.191 +02:00 [INF] Executed endpoint 'SimpleTransformer.Api.Endpoints.Controllers.InferController.Infer (SimpleTransformer)'
+2026-07-25 10:30:21.196 +02:00 [ERR] Connection id "0HNNA4RLO5U09", Request id "0HNNA4RLO5U09:00000001": An unhandled exception was thrown by the application.
+System.ArgumentException: Input must be a vector.
+   at SimpleTransformer.Model.Extensions.TensorUtilities.Softmax(Tensor vector) in c:\Users\Iain\vscode\llm\SimpleTransformer\SimpleTransformer\Model\Extensions\TensorUtilities.cs:line 170
+   at SimpleTransformer.Model.TransformerModel.Predict(Tensor input) in c:\Users\Iain\vscode\llm\SimpleTransformer\SimpleTransformer\Model\TransformerModel.cs:line 94
+   at SimpleTransformer.Api.Endpoints.Services.InferService.Infer(InferenceRequest req) in c:\Users\Iain\vscode\llm\SimpleTransformer\SimpleTransformer\Api\Endpoints\Services\InferService.cs:line 33
+   at SimpleTransformer.Api.Endpoints.Controllers.InferController.Infer(InferenceRequest req) in c:\Users\Iain\vscode\llm\SimpleTransformer\SimpleTransformer\Api\Endpoints\Controllers\InferController.cs:line 29
+   at lambda_method4(Closure, Object)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ActionMethodExecutor.AwaitableObjectResultExecutor.Execute(ActionContext actionContext, IActionResultTypeMapper mapper, ObjectMethodExecutor executor, Object controller, Object[] arguments)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ControllerActionInvoker.<InvokeActionMethodAsync>g__Awaited|12_0(ControllerActionInvoker invoker, ValueTask`1 actionResultValueTask)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ControllerActionInvoker.<InvokeNextActionFilterAsync>g__Awaited|10_0(ControllerActionInvoker invoker, Task lastTask, State next, Scope scope, Object state, Boolean isCompleted)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ControllerActionInvoker.Rethrow(ActionExecutedContextSealed context)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ControllerActionInvoker.Next(State& next, Scope& scope, Object& state, Boolean& isCompleted)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ControllerActionInvoker.InvokeInnerFilterAsync()
+--- End of stack trace from previous location ---
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ResourceInvoker.<InvokeFilterPipelineAsync>g__Awaited|20_0(ResourceInvoker invoker, Task lastTask, State next, Scope scope, Object state, Boolean isCompleted)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ResourceInvoker.<InvokeAsync>g__Logged|17_1(ResourceInvoker invoker)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ResourceInvoker.<InvokeAsync>g__Logged|17_1(ResourceInvoker invoker)
+   at Microsoft.AspNetCore.Routing.EndpointMiddleware.<Invoke>g__AwaitRequestTask|7_0(Endpoint endpoint, Task requestTask, ILogger logger)
+   at Microsoft.AspNetCore.Authorization.AuthorizationMiddleware.Invoke(HttpContext context)
+   at Microsoft.AspNetCore.Authentication.AuthenticationMiddleware.Invoke(HttpContext context)
+   at Microsoft.AspNetCore.Server.Kestrel.Core.Internal.Http.HttpProtocol.ProcessRequests[TContext](IHttpApplication`1 application)
+2026-07-25 10:30:21.244 +02:00 [INF] Request finished HTTP/1.1 POST http://127.0.0.1:5000/api/v1/infer - 500 0 null 19796.5315ms
+2026-07-25 10:36:14.587 +02:00 [INF] Request starting HTTP/1.1 POST http://127.0.0.1:5000/api/v1/infer - application/json 87
+2026-07-25 10:36:25.183 +02:00 [INF] Executing endpoint 'SimpleTransformer.Api.Endpoints.Controllers.InferController.Infer (SimpleTransformer)'
+2026-07-25 10:36:25.184 +02:00 [INF] Route matched with {action = "Infer", controller = "Infer"}. Executing controller action with signature System.Threading.Tasks.Task`1[SimpleTransformer.Api.ApiResponse`1[SimpleTransformer.Api.Responses.InferenceResponse]] Infer(SimpleTransformer.Api.Requests.InferenceRequest) on controller SimpleTransformer.Api.Endpoints.Controllers.InferController (SimpleTransformer).
+2026-07-25 10:41:17.872 +02:00 [INF] Configuration is valid. Proceeding...
+2026-07-25 10:41:18.693 +02:00 [INF] Current configuration:
+Vocabulary size: 30522
+Embedding size: 768
+Number of layers: 12
+Number of heads: 12
+Maximum sequence length: 512
+Feed forward size: 3072
+2026-07-25 10:41:18.694 +02:00 [INF] Constructing transformer architecture. Please stand by...
+2026-07-25 10:41:18.737 +02:00 [INF] Layer 0: Attention layer constructed in 41ms.
+2026-07-25 10:41:18.826 +02:00 [INF] Layer 0: Feed forward layer constructed in 88ms.
+2026-07-25 10:41:18.829 +02:00 [INF] Layer 0: Layer norm 1 constructed in 1ms.
+2026-07-25 10:41:18.830 +02:00 [INF] Layer 0: Layer norm 2 constructed in 0ms.
+2026-07-25 10:41:18.831 +02:00 [INF] Layer 0 constructed in 136ms. Total elapsed: 136ms.
+2026-07-25 10:41:18.872 +02:00 [INF] Layer 1: Attention layer constructed in 40ms.
+2026-07-25 10:41:18.955 +02:00 [INF] Layer 1: Feed forward layer constructed in 82ms.
+2026-07-25 10:41:18.956 +02:00 [INF] Layer 1: Layer norm 1 constructed in 0ms.
+2026-07-25 10:41:18.956 +02:00 [INF] Layer 1: Layer norm 2 constructed in 0ms.
+2026-07-25 10:41:18.957 +02:00 [INF] Layer 1 constructed in 125ms. Total elapsed: 262ms.
+2026-07-25 10:41:18.999 +02:00 [INF] Layer 2: Attention layer constructed in 41ms.
+2026-07-25 10:41:19.084 +02:00 [INF] Layer 2: Feed forward layer constructed in 84ms.
+2026-07-25 10:41:19.085 +02:00 [INF] Layer 2: Layer norm 1 constructed in 0ms.
+2026-07-25 10:41:19.086 +02:00 [INF] Layer 2: Layer norm 2 constructed in 0ms.
+2026-07-25 10:41:19.087 +02:00 [INF] Layer 2 constructed in 129ms. Total elapsed: 392ms.
+2026-07-25 10:41:19.129 +02:00 [INF] Layer 3: Attention layer constructed in 41ms.
+2026-07-25 10:41:19.212 +02:00 [INF] Layer 3: Feed forward layer constructed in 82ms.
+2026-07-25 10:41:19.213 +02:00 [INF] Layer 3: Layer norm 1 constructed in 0ms.
+2026-07-25 10:41:19.214 +02:00 [INF] Layer 3: Layer norm 2 constructed in 0ms.
+2026-07-25 10:41:19.214 +02:00 [INF] Layer 3 constructed in 126ms. Total elapsed: 520ms.
+2026-07-25 10:41:19.255 +02:00 [INF] Layer 4: Attention layer constructed in 40ms.
+2026-07-25 10:41:19.338 +02:00 [INF] Layer 4: Feed forward layer constructed in 82ms.
+2026-07-25 10:41:19.339 +02:00 [INF] Layer 4: Layer norm 1 constructed in 0ms.
+2026-07-25 10:41:19.340 +02:00 [INF] Layer 4: Layer norm 2 constructed in 0ms.
+2026-07-25 10:41:19.341 +02:00 [INF] Layer 4 constructed in 125ms. Total elapsed: 646ms.
+2026-07-25 10:41:19.382 +02:00 [INF] Layer 5: Attention layer constructed in 40ms.
+2026-07-25 10:41:19.464 +02:00 [INF] Layer 5: Feed forward layer constructed in 82ms.
+2026-07-25 10:41:19.467 +02:00 [INF] Layer 5: Layer norm 1 constructed in 0ms.
+2026-07-25 10:41:19.471 +02:00 [INF] Layer 5: Layer norm 2 constructed in 0ms.
+2026-07-25 10:41:19.481 +02:00 [INF] Layer 5 constructed in 139ms. Total elapsed: 786ms.
+2026-07-25 10:41:19.532 +02:00 [INF] Layer 6: Attention layer constructed in 46ms.
+2026-07-25 10:41:19.623 +02:00 [INF] Layer 6: Feed forward layer constructed in 89ms.
+2026-07-25 10:41:19.624 +02:00 [INF] Layer 6: Layer norm 1 constructed in 0ms.
+2026-07-25 10:41:19.628 +02:00 [INF] Layer 6: Layer norm 2 constructed in 0ms.
+2026-07-25 10:41:19.632 +02:00 [INF] Layer 6 constructed in 147ms. Total elapsed: 938ms.
+2026-07-25 10:41:19.676 +02:00 [INF] Layer 7: Attention layer constructed in 40ms.
+2026-07-25 10:41:19.762 +02:00 [INF] Layer 7: Feed forward layer constructed in 85ms.
+2026-07-25 10:41:19.764 +02:00 [INF] Layer 7: Layer norm 1 constructed in 0ms.
+2026-07-25 10:41:19.765 +02:00 [INF] Layer 7: Layer norm 2 constructed in 0ms.
+2026-07-25 10:41:19.767 +02:00 [INF] Layer 7 constructed in 131ms. Total elapsed: 1072ms.
+2026-07-25 10:41:19.812 +02:00 [INF] Layer 8: Attention layer constructed in 43ms.
+2026-07-25 10:41:19.902 +02:00 [INF] Layer 8: Feed forward layer constructed in 88ms.
+2026-07-25 10:41:19.903 +02:00 [INF] Layer 8: Layer norm 1 constructed in 0ms.
+2026-07-25 10:41:19.904 +02:00 [INF] Layer 8: Layer norm 2 constructed in 0ms.
+2026-07-25 10:41:19.905 +02:00 [INF] Layer 8 constructed in 136ms. Total elapsed: 1210ms.
+2026-07-25 10:41:19.947 +02:00 [INF] Layer 9: Attention layer constructed in 41ms.
+2026-07-25 10:41:20.062 +02:00 [INF] Layer 9: Feed forward layer constructed in 113ms.
+2026-07-25 10:41:20.063 +02:00 [INF] Layer 9: Layer norm 1 constructed in 0ms.
+2026-07-25 10:41:20.065 +02:00 [INF] Layer 9: Layer norm 2 constructed in 0ms.
+2026-07-25 10:41:20.066 +02:00 [INF] Layer 9 constructed in 160ms. Total elapsed: 1372ms.
+2026-07-25 10:41:20.113 +02:00 [INF] Layer 10: Attention layer constructed in 45ms.
+2026-07-25 10:41:20.240 +02:00 [INF] Layer 10: Feed forward layer constructed in 126ms.
+2026-07-25 10:41:20.241 +02:00 [INF] Layer 10: Layer norm 1 constructed in 0ms.
+2026-07-25 10:41:20.242 +02:00 [INF] Layer 10: Layer norm 2 constructed in 0ms.
+2026-07-25 10:41:20.243 +02:00 [INF] Layer 10 constructed in 175ms. Total elapsed: 1548ms.
+2026-07-25 10:41:20.286 +02:00 [INF] Layer 11: Attention layer constructed in 42ms.
+2026-07-25 10:41:20.372 +02:00 [INF] Layer 11: Feed forward layer constructed in 85ms.
+2026-07-25 10:41:20.373 +02:00 [INF] Layer 11: Layer norm 1 constructed in 0ms.
+2026-07-25 10:41:20.374 +02:00 [INF] Layer 11: Layer norm 2 constructed in 0ms.
+2026-07-25 10:41:20.374 +02:00 [INF] Layer 11 constructed in 131ms. Total elapsed: 1680ms.
+2026-07-25 10:41:20.375 +02:00 [INF] Transformer architecture initialisation completed in 1681ms.
+2026-07-25 10:41:20.376 +02:00 [INF] Transformer model ready to be loaded.
+2026-07-25 10:41:20.718 +02:00 [INF] Loading transformer model...
+2026-07-25 10:41:20.781 +02:00 [INF] Transformer model loaded in 61ms.
+2026-07-25 10:41:20.842 +02:00 [INF] REST API ready.
+2026-07-25 10:41:20.845 +02:00 [INF] Listening for requests...
+2026-07-25 10:41:21.022 +02:00 [INF] Now listening on: http://[::]:5000
+2026-07-25 10:41:21.026 +02:00 [INF] Application started. Press Ctrl+C to shut down.
+2026-07-25 10:41:21.027 +02:00 [INF] Hosting environment: Production
+2026-07-25 10:41:21.029 +02:00 [INF] Content root path: C:\Users\Iain\vscode\llm\SimpleTransformer\SimpleTransformer
+2026-07-25 10:41:33.164 +02:00 [INF] Request starting HTTP/1.1 POST http://127.0.0.1:5000/api/v1/infer - application/json 87
+2026-07-25 10:41:33.182 +02:00 [INF] Executing endpoint 'SimpleTransformer.Api.Endpoints.Controllers.InferController.Infer (SimpleTransformer)'
+2026-07-25 10:41:33.219 +02:00 [INF] Route matched with {action = "Infer", controller = "Infer"}. Executing controller action with signature System.Threading.Tasks.Task`1[SimpleTransformer.Api.ApiResponse`1[SimpleTransformer.Api.Responses.InferenceResponse]] Infer(SimpleTransformer.Api.Requests.InferenceRequest) on controller SimpleTransformer.Api.Endpoints.Controllers.InferController (SimpleTransformer).
+2026-07-25 10:41:51.462 +02:00 [INF] Executing ObjectResult, writing value of type 'SimpleTransformer.Api.ApiResponse`1[[SimpleTransformer.Api.Responses.InferenceResponse, SimpleTransformer, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null]]'.
+2026-07-25 10:41:51.489 +02:00 [INF] Executed action SimpleTransformer.Api.Endpoints.Controllers.InferController.Infer (SimpleTransformer) in 18263.1653ms
+2026-07-25 10:41:51.498 +02:00 [INF] Executed endpoint 'SimpleTransformer.Api.Endpoints.Controllers.InferController.Infer (SimpleTransformer)'
+2026-07-25 10:41:51.500 +02:00 [INF] Request finished HTTP/1.1 POST http://127.0.0.1:5000/api/v1/infer - 200 null application/json; charset=utf-8 18338.5844ms
+2026-07-25 10:43:11.664 +02:00 [INF] Configuration is valid. Proceeding...
+2026-07-25 10:43:12.502 +02:00 [INF] Current configuration:
+Vocabulary size: 30522
+Embedding size: 768
+Number of layers: 12
+Number of heads: 12
+Maximum sequence length: 512
+Feed forward size: 3072
+2026-07-25 10:43:12.502 +02:00 [INF] Constructing transformer architecture. Please stand by...
+2026-07-25 10:43:12.545 +02:00 [INF] Layer 0: Attention layer constructed in 41ms.
+2026-07-25 10:43:12.629 +02:00 [INF] Layer 0: Feed forward layer constructed in 83ms.
+2026-07-25 10:43:12.631 +02:00 [INF] Layer 0: Layer norm 1 constructed in 1ms.
+2026-07-25 10:43:12.632 +02:00 [INF] Layer 0: Layer norm 2 constructed in 0ms.
+2026-07-25 10:43:12.632 +02:00 [INF] Layer 0 constructed in 129ms. Total elapsed: 129ms.
+2026-07-25 10:43:12.673 +02:00 [INF] Layer 1: Attention layer constructed in 40ms.
+2026-07-25 10:43:12.755 +02:00 [INF] Layer 1: Feed forward layer constructed in 81ms.
+2026-07-25 10:43:12.756 +02:00 [INF] Layer 1: Layer norm 1 constructed in 0ms.
+2026-07-25 10:43:12.757 +02:00 [INF] Layer 1: Layer norm 2 constructed in 0ms.
+2026-07-25 10:43:12.757 +02:00 [INF] Layer 1 constructed in 124ms. Total elapsed: 254ms.
+2026-07-25 10:43:12.798 +02:00 [INF] Layer 2: Attention layer constructed in 40ms.
+2026-07-25 10:43:12.881 +02:00 [INF] Layer 2: Feed forward layer constructed in 82ms.
+2026-07-25 10:43:12.882 +02:00 [INF] Layer 2: Layer norm 1 constructed in 0ms.
+2026-07-25 10:43:12.883 +02:00 [INF] Layer 2: Layer norm 2 constructed in 0ms.
+2026-07-25 10:43:12.884 +02:00 [INF] Layer 2 constructed in 126ms. Total elapsed: 381ms.
+2026-07-25 10:43:12.924 +02:00 [INF] Layer 3: Attention layer constructed in 40ms.
+2026-07-25 10:43:13.010 +02:00 [INF] Layer 3: Feed forward layer constructed in 84ms.
+2026-07-25 10:43:13.011 +02:00 [INF] Layer 3: Layer norm 1 constructed in 0ms.
+2026-07-25 10:43:13.011 +02:00 [INF] Layer 3: Layer norm 2 constructed in 0ms.
+2026-07-25 10:43:13.012 +02:00 [INF] Layer 3 constructed in 128ms. Total elapsed: 509ms.
+2026-07-25 10:43:13.054 +02:00 [INF] Layer 4: Attention layer constructed in 41ms.
+2026-07-25 10:43:13.138 +02:00 [INF] Layer 4: Feed forward layer constructed in 83ms.
+2026-07-25 10:43:13.139 +02:00 [INF] Layer 4: Layer norm 1 constructed in 0ms.
+2026-07-25 10:43:13.140 +02:00 [INF] Layer 4: Layer norm 2 constructed in 0ms.
+2026-07-25 10:43:13.142 +02:00 [INF] Layer 4 constructed in 128ms. Total elapsed: 639ms.
+2026-07-25 10:43:13.183 +02:00 [INF] Layer 5: Attention layer constructed in 40ms.
+2026-07-25 10:43:13.269 +02:00 [INF] Layer 5: Feed forward layer constructed in 85ms.
+2026-07-25 10:43:13.271 +02:00 [INF] Layer 5: Layer norm 1 constructed in 0ms.
+2026-07-25 10:43:13.276 +02:00 [INF] Layer 5: Layer norm 2 constructed in 0ms.
+2026-07-25 10:43:13.284 +02:00 [INF] Layer 5 constructed in 141ms. Total elapsed: 781ms.
+2026-07-25 10:43:13.340 +02:00 [INF] Layer 6: Attention layer constructed in 50ms.
+2026-07-25 10:43:13.438 +02:00 [INF] Layer 6: Feed forward layer constructed in 96ms.
+2026-07-25 10:43:13.439 +02:00 [INF] Layer 6: Layer norm 1 constructed in 0ms.
+2026-07-25 10:43:13.440 +02:00 [INF] Layer 6: Layer norm 2 constructed in 0ms.
+2026-07-25 10:43:13.441 +02:00 [INF] Layer 6 constructed in 151ms. Total elapsed: 938ms.
+2026-07-25 10:43:13.484 +02:00 [INF] Layer 7: Attention layer constructed in 42ms.
+2026-07-25 10:43:13.573 +02:00 [INF] Layer 7: Feed forward layer constructed in 87ms.
+2026-07-25 10:43:13.574 +02:00 [INF] Layer 7: Layer norm 1 constructed in 0ms.
+2026-07-25 10:43:13.575 +02:00 [INF] Layer 7: Layer norm 2 constructed in 0ms.
+2026-07-25 10:43:13.576 +02:00 [INF] Layer 7 constructed in 134ms. Total elapsed: 1073ms.
+2026-07-25 10:43:13.619 +02:00 [INF] Layer 8: Attention layer constructed in 42ms.
+2026-07-25 10:43:13.704 +02:00 [INF] Layer 8: Feed forward layer constructed in 83ms.
+2026-07-25 10:43:13.705 +02:00 [INF] Layer 8: Layer norm 1 constructed in 0ms.
+2026-07-25 10:43:13.707 +02:00 [INF] Layer 8: Layer norm 2 constructed in 0ms.
+2026-07-25 10:43:13.709 +02:00 [INF] Layer 8 constructed in 131ms. Total elapsed: 1206ms.
+2026-07-25 10:43:13.752 +02:00 [INF] Layer 9: Attention layer constructed in 40ms.
+2026-07-25 10:43:13.839 +02:00 [INF] Layer 9: Feed forward layer constructed in 85ms.
+2026-07-25 10:43:13.840 +02:00 [INF] Layer 9: Layer norm 1 constructed in 0ms.
+2026-07-25 10:43:13.841 +02:00 [INF] Layer 9: Layer norm 2 constructed in 0ms.
+2026-07-25 10:43:13.843 +02:00 [INF] Layer 9 constructed in 131ms. Total elapsed: 1340ms.
+2026-07-25 10:43:13.887 +02:00 [INF] Layer 10: Attention layer constructed in 42ms.
+2026-07-25 10:43:13.973 +02:00 [INF] Layer 10: Feed forward layer constructed in 85ms.
+2026-07-25 10:43:13.974 +02:00 [INF] Layer 10: Layer norm 1 constructed in 0ms.
+2026-07-25 10:43:13.976 +02:00 [INF] Layer 10: Layer norm 2 constructed in 0ms.
+2026-07-25 10:43:13.977 +02:00 [INF] Layer 10 constructed in 133ms. Total elapsed: 1474ms.
+2026-07-25 10:43:14.020 +02:00 [INF] Layer 11: Attention layer constructed in 41ms.
+2026-07-25 10:43:14.108 +02:00 [INF] Layer 11: Feed forward layer constructed in 86ms.
+2026-07-25 10:43:14.109 +02:00 [INF] Layer 11: Layer norm 1 constructed in 0ms.
+2026-07-25 10:43:14.110 +02:00 [INF] Layer 11: Layer norm 2 constructed in 0ms.
+2026-07-25 10:43:14.112 +02:00 [INF] Layer 11 constructed in 132ms. Total elapsed: 1609ms.
+2026-07-25 10:43:14.114 +02:00 [INF] Transformer architecture initialisation completed in 1611ms.
+2026-07-25 10:43:14.115 +02:00 [INF] Transformer model ready to be loaded.
+2026-07-25 10:43:14.494 +02:00 [INF] Loading transformer model...
+2026-07-25 10:43:14.570 +02:00 [INF] Transformer model loaded in 74ms.
+2026-07-25 10:43:14.639 +02:00 [INF] REST API ready.
+2026-07-25 10:43:14.642 +02:00 [INF] Listening for requests...
+2026-07-25 10:43:14.818 +02:00 [INF] Now listening on: http://[::]:5000
+2026-07-25 10:43:14.822 +02:00 [INF] Application started. Press Ctrl+C to shut down.
+2026-07-25 10:43:14.823 +02:00 [INF] Hosting environment: Production
+2026-07-25 10:43:14.823 +02:00 [INF] Content root path: C:\Users\Iain\vscode\llm\SimpleTransformer\SimpleTransformer
+2026-07-25 10:43:20.218 +02:00 [INF] Request starting HTTP/1.1 POST http://127.0.0.1:5000/api/v1/infer - application/json 87
+2026-07-25 10:43:20.235 +02:00 [INF] Executing endpoint 'SimpleTransformer.Api.Endpoints.Controllers.InferController.Infer (SimpleTransformer)'
+2026-07-25 10:43:20.272 +02:00 [INF] Route matched with {action = "Infer", controller = "Infer"}. Executing controller action with signature System.Threading.Tasks.Task`1[SimpleTransformer.Api.ApiResponse`1[SimpleTransformer.Api.Responses.InferenceResponse]] Infer(SimpleTransformer.Api.Requests.InferenceRequest) on controller SimpleTransformer.Api.Endpoints.Controllers.InferController (SimpleTransformer).
+2026-07-25 10:43:22.492 +02:00 [INF] Executing ObjectResult, writing value of type 'SimpleTransformer.Api.ApiResponse`1[[SimpleTransformer.Api.Responses.InferenceResponse, SimpleTransformer, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null]]'.
+2026-07-25 10:43:22.516 +02:00 [INF] Executed action SimpleTransformer.Api.Endpoints.Controllers.InferController.Infer (SimpleTransformer) in 2239.0088ms
+2026-07-25 10:43:22.525 +02:00 [INF] Executed endpoint 'SimpleTransformer.Api.Endpoints.Controllers.InferController.Infer (SimpleTransformer)'
+2026-07-25 10:43:22.528 +02:00 [INF] Request finished HTTP/1.1 POST http://127.0.0.1:5000/api/v1/infer - 200 null application/json; charset=utf-8 2311.9582ms
+2026-07-25 10:44:55.208 +02:00 [INF] Configuration is valid. Proceeding...
+2026-07-25 10:44:56.026 +02:00 [INF] Current configuration:
+Vocabulary size: 30522
+Embedding size: 768
+Number of layers: 12
+Number of heads: 12
+Maximum sequence length: 512
+Feed forward size: 3072
+2026-07-25 10:44:56.027 +02:00 [INF] Constructing transformer architecture. Please stand by...
+2026-07-25 10:44:56.070 +02:00 [INF] Layer 0: Attention layer constructed in 42ms.
+2026-07-25 10:44:56.158 +02:00 [INF] Layer 0: Feed forward layer constructed in 86ms.
+2026-07-25 10:44:56.161 +02:00 [INF] Layer 0: Layer norm 1 constructed in 1ms.
+2026-07-25 10:44:56.161 +02:00 [INF] Layer 0: Layer norm 2 constructed in 0ms.
+2026-07-25 10:44:56.162 +02:00 [INF] Layer 0 constructed in 135ms. Total elapsed: 135ms.
+2026-07-25 10:44:56.203 +02:00 [INF] Layer 1: Attention layer constructed in 40ms.
+2026-07-25 10:44:56.288 +02:00 [INF] Layer 1: Feed forward layer constructed in 83ms.
+2026-07-25 10:44:56.289 +02:00 [INF] Layer 1: Layer norm 1 constructed in 0ms.
+2026-07-25 10:44:56.289 +02:00 [INF] Layer 1: Layer norm 2 constructed in 0ms.
+2026-07-25 10:44:56.290 +02:00 [INF] Layer 1 constructed in 127ms. Total elapsed: 263ms.
+2026-07-25 10:44:56.332 +02:00 [INF] Layer 2: Attention layer constructed in 42ms.
+2026-07-25 10:44:56.416 +02:00 [INF] Layer 2: Feed forward layer constructed in 82ms.
+2026-07-25 10:44:56.417 +02:00 [INF] Layer 2: Layer norm 1 constructed in 0ms.
+2026-07-25 10:44:56.418 +02:00 [INF] Layer 2: Layer norm 2 constructed in 0ms.
+2026-07-25 10:44:56.418 +02:00 [INF] Layer 2 constructed in 128ms. Total elapsed: 391ms.
+2026-07-25 10:44:56.460 +02:00 [INF] Layer 3: Attention layer constructed in 41ms.
+2026-07-25 10:44:56.544 +02:00 [INF] Layer 3: Feed forward layer constructed in 82ms.
+2026-07-25 10:44:56.545 +02:00 [INF] Layer 3: Layer norm 1 constructed in 0ms.
+2026-07-25 10:44:56.546 +02:00 [INF] Layer 3: Layer norm 2 constructed in 0ms.
+2026-07-25 10:44:56.546 +02:00 [INF] Layer 3 constructed in 127ms. Total elapsed: 519ms.
+2026-07-25 10:44:56.587 +02:00 [INF] Layer 4: Attention layer constructed in 40ms.
+2026-07-25 10:44:56.672 +02:00 [INF] Layer 4: Feed forward layer constructed in 83ms.
+2026-07-25 10:44:56.672 +02:00 [INF] Layer 4: Layer norm 1 constructed in 0ms.
+2026-07-25 10:44:56.673 +02:00 [INF] Layer 4: Layer norm 2 constructed in 0ms.
+2026-07-25 10:44:56.674 +02:00 [INF] Layer 4 constructed in 126ms. Total elapsed: 647ms.
+2026-07-25 10:44:56.716 +02:00 [INF] Layer 5: Attention layer constructed in 41ms.
+2026-07-25 10:44:56.798 +02:00 [INF] Layer 5: Feed forward layer constructed in 81ms.
+2026-07-25 10:44:56.799 +02:00 [INF] Layer 5: Layer norm 1 constructed in 0ms.
+2026-07-25 10:44:56.800 +02:00 [INF] Layer 5: Layer norm 2 constructed in 0ms.
+2026-07-25 10:44:56.801 +02:00 [INF] Layer 5 constructed in 126ms. Total elapsed: 774ms.
+2026-07-25 10:44:56.842 +02:00 [INF] Layer 6: Attention layer constructed in 40ms.
+2026-07-25 10:44:56.925 +02:00 [INF] Layer 6: Feed forward layer constructed in 82ms.
+2026-07-25 10:44:56.926 +02:00 [INF] Layer 6: Layer norm 1 constructed in 0ms.
+2026-07-25 10:44:56.927 +02:00 [INF] Layer 6: Layer norm 2 constructed in 0ms.
+2026-07-25 10:44:56.927 +02:00 [INF] Layer 6 constructed in 125ms. Total elapsed: 900ms.
+2026-07-25 10:44:56.976 +02:00 [INF] Layer 7: Attention layer constructed in 47ms.
+2026-07-25 10:44:57.060 +02:00 [INF] Layer 7: Feed forward layer constructed in 83ms.
+2026-07-25 10:44:57.062 +02:00 [INF] Layer 7: Layer norm 1 constructed in 0ms.
+2026-07-25 10:44:57.063 +02:00 [INF] Layer 7: Layer norm 2 constructed in 0ms.
+2026-07-25 10:44:57.065 +02:00 [INF] Layer 7 constructed in 136ms. Total elapsed: 1037ms.
+2026-07-25 10:44:57.107 +02:00 [INF] Layer 8: Attention layer constructed in 41ms.
+2026-07-25 10:44:57.193 +02:00 [INF] Layer 8: Feed forward layer constructed in 84ms.
+2026-07-25 10:44:57.194 +02:00 [INF] Layer 8: Layer norm 1 constructed in 0ms.
+2026-07-25 10:44:57.196 +02:00 [INF] Layer 8: Layer norm 2 constructed in 0ms.
+2026-07-25 10:44:57.198 +02:00 [INF] Layer 8 constructed in 132ms. Total elapsed: 1171ms.
+2026-07-25 10:44:57.242 +02:00 [INF] Layer 9: Attention layer constructed in 41ms.
+2026-07-25 10:44:57.330 +02:00 [INF] Layer 9: Feed forward layer constructed in 86ms.
+2026-07-25 10:44:57.331 +02:00 [INF] Layer 9: Layer norm 1 constructed in 0ms.
+2026-07-25 10:44:57.332 +02:00 [INF] Layer 9: Layer norm 2 constructed in 0ms.
+2026-07-25 10:44:57.332 +02:00 [INF] Layer 9 constructed in 131ms. Total elapsed: 1305ms.
+2026-07-25 10:44:57.375 +02:00 [INF] Layer 10: Attention layer constructed in 41ms.
+2026-07-25 10:44:57.460 +02:00 [INF] Layer 10: Feed forward layer constructed in 84ms.
+2026-07-25 10:44:57.461 +02:00 [INF] Layer 10: Layer norm 1 constructed in 0ms.
+2026-07-25 10:44:57.462 +02:00 [INF] Layer 10: Layer norm 2 constructed in 0ms.
+2026-07-25 10:44:57.463 +02:00 [INF] Layer 10 constructed in 130ms. Total elapsed: 1436ms.
+2026-07-25 10:44:57.506 +02:00 [INF] Layer 11: Attention layer constructed in 40ms.
+2026-07-25 10:44:57.619 +02:00 [INF] Layer 11: Feed forward layer constructed in 112ms.
+2026-07-25 10:44:57.620 +02:00 [INF] Layer 11: Layer norm 1 constructed in 0ms.
+2026-07-25 10:44:57.621 +02:00 [INF] Layer 11: Layer norm 2 constructed in 0ms.
+2026-07-25 10:44:57.622 +02:00 [INF] Layer 11 constructed in 157ms. Total elapsed: 1595ms.
+2026-07-25 10:44:57.623 +02:00 [INF] Transformer architecture initialisation completed in 1596ms.
+2026-07-25 10:44:57.624 +02:00 [INF] Transformer model ready to be loaded.
+2026-07-25 10:44:57.973 +02:00 [INF] Loading transformer model...
+2026-07-25 10:44:58.030 +02:00 [INF] Transformer model loaded in 56ms.
+2026-07-25 10:44:58.095 +02:00 [INF] REST API ready.
+2026-07-25 10:44:58.098 +02:00 [INF] Listening for requests...
+2026-07-25 10:44:58.271 +02:00 [INF] Now listening on: http://[::]:5000
+2026-07-25 10:44:58.275 +02:00 [INF] Application started. Press Ctrl+C to shut down.
+2026-07-25 10:44:58.275 +02:00 [INF] Hosting environment: Production
+2026-07-25 10:44:58.276 +02:00 [INF] Content root path: C:\Users\Iain\vscode\llm\SimpleTransformer\SimpleTransformer
+2026-07-25 10:45:00.945 +02:00 [INF] Request starting HTTP/1.1 POST http://127.0.0.1:5000/api/v1/infer - application/json 87
+2026-07-25 10:45:00.963 +02:00 [INF] Executing endpoint 'SimpleTransformer.Api.Endpoints.Controllers.InferController.Infer (SimpleTransformer)'
+2026-07-25 10:45:00.999 +02:00 [INF] Route matched with {action = "Infer", controller = "Infer"}. Executing controller action with signature System.Threading.Tasks.Task`1[SimpleTransformer.Api.ApiResponse`1[SimpleTransformer.Api.Responses.InferenceResponse]] Infer(SimpleTransformer.Api.Requests.InferenceRequest) on controller SimpleTransformer.Api.Endpoints.Controllers.InferController (SimpleTransformer).
+2026-07-25 10:45:03.350 +02:00 [INF] Executing ObjectResult, writing value of type 'SimpleTransformer.Api.ApiResponse`1[[SimpleTransformer.Api.Responses.InferenceResponse, SimpleTransformer, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null]]'.
+2026-07-25 10:45:03.376 +02:00 [INF] Executed action SimpleTransformer.Api.Endpoints.Controllers.InferController.Infer (SimpleTransformer) in 2372.4366ms
+2026-07-25 10:45:03.386 +02:00 [INF] Executed endpoint 'SimpleTransformer.Api.Endpoints.Controllers.InferController.Infer (SimpleTransformer)'
+2026-07-25 10:45:03.389 +02:00 [INF] Request finished HTTP/1.1 POST http://127.0.0.1:5000/api/v1/infer - 200 null application/json; charset=utf-8 2445.4025ms

@@ -41,6 +41,40 @@ namespace SimpleTransformer.Model.Extensions
             return tokenIds;
         }
 
+        public static int[] ArgMax(Tensor logits)
+        {
+            if (logits.Rank != 2)
+                throw new ArgumentException("Expected a matrix.");
+
+            int rows = logits.Rows;
+            int cols = logits.Cols;
+
+            int[] result = new int[rows];
+
+            for (int r = 0; r < rows; r++)
+            {
+                int offset = r * cols;
+
+                int bestIndex = 0;
+                float bestValue = logits.Data[offset];
+
+                for (int c = 1; c < cols; c++)
+                {
+                    float value = logits.Data[offset + c];
+
+                    if (value > bestValue)
+                    {
+                        bestValue = value;
+                        bestIndex = c;
+                    }
+                }
+
+                result[r] = bestIndex;
+            }
+
+            return result;
+        }
+
         public static List<string> TokenizeRawText(string input)
         {
             input = input.ToLowerInvariant();

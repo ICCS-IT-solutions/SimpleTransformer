@@ -162,7 +162,7 @@ namespace SimpleTransformer.Model.Extensions
         #endregion
 
         #region Softmax
-
+        //Note to self: Possibly move softmax to math? Makes more logical sense...
         //Compute softmax
         public static Tensor Softmax(Tensor vector)
         {
@@ -198,6 +198,45 @@ namespace SimpleTransformer.Model.Extensions
 
             //Return the result
             return res;
+        }
+        //Softmax for matrix (rank = 2)
+        public static Tensor SoftmaxMatrix(Tensor matrix)
+        {
+            if (matrix.Rank != 2)
+                throw new ArgumentException("Input must be a matrix.");
+
+            Tensor result = new Tensor(matrix.Rows, matrix.Cols);
+
+            for (int row = 0; row < matrix.Rows; row++)
+            {
+                // Find largest value in this row
+                float max = matrix[row, 0];
+
+                for (int col = 1; col < matrix.Cols; col++)
+                {
+                    if (matrix[row, col] > max)
+                        max = matrix[row, col];
+                }
+
+                // Compute exponentials
+                float sum = 0f;
+
+                for (int col = 0; col < matrix.Cols; col++)
+                {
+                    float value = MathF.Exp(matrix[row, col] - max);
+
+                    result[row, col] = value;
+                    sum += value;
+                }
+
+                // Normalize
+                for (int col = 0; col < matrix.Cols; col++)
+                {
+                    result[row, col] /= sum;
+                }
+            }
+
+            return result;
         }
 
         public static void SoftmaxBackwardInPlace(

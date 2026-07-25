@@ -1,3 +1,4 @@
+using System.Text;
 using SimpleTransformer.Api.Requests;
 using SimpleTransformer.Api.Responses;
 using SimpleTransformer.Model;
@@ -33,10 +34,10 @@ namespace SimpleTransformer.Api.Endpoints.Services
             var prediction = _model.Predict(tensor);
 
             //Convert the tensor to token ids
-            var tokenIds = TokenizationUtilities.ToTokenIds(prediction);
+            // var tokenIds = TokenizationUtilities.ToTokenIds(prediction);
 
             //Convert the token ids to text
-            var outputText = _tokenizer.Decode(tokenIds);
+            var outputText = _tokenizer.Decode(prediction);
 
             //Create the response
             
@@ -50,6 +51,14 @@ namespace SimpleTransformer.Api.Endpoints.Services
                     OutputText = string.IsNullOrEmpty(outputText) ? "Could not generate usable output from the tokens." : outputText
                 }
             };
+            #if DEBUG
+            //Only here should I dump the prediction output to a file. 
+            var debugOutputSb = new StringBuilder();
+            debugOutputSb.AppendLine("Tokens: " + string.Join(", ", tokens.Select(x => x.ToString())));
+            //New line
+            debugOutputSb.AppendLine("Prediction: " + string.Join(", ", prediction.Select(x => x.ToString())));
+            File.WriteAllText("debug_prediction_output.txt", debugOutputSb.ToString());
+            #endif
 
             return response;
         }

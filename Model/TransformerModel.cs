@@ -1,4 +1,5 @@
 using Serilog;
+using SimpleTransformer.Model.Extensions;
 
 namespace SimpleTransformer.Model
 {
@@ -86,9 +87,13 @@ namespace SimpleTransformer.Model
             gradient = _embedding.Backward(gradient);
         }
 
-        public Tensor Predict(Tensor input)
+        public int[] Predict(Tensor input)
         {
-            return Forward(input);
+            var logits = Forward(input);
+
+            var probabilities = TensorUtilities.SoftmaxRows(logits);
+
+            return TokenizationUtilities.ArgMax(probabilities);
         }
 
         public void ZeroGradients()
