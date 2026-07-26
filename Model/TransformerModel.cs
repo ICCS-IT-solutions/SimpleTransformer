@@ -35,7 +35,7 @@ namespace SimpleTransformer.Model
         
         public static TransformerConfig DefaultConfig => new TransformerConfig
         {
-            
+
             VocabSize = 30522, // Common vocabulary size for BERT-like models
             EmbeddingSize = 768, // Common embedding size for BERT-like models
             NumLayers = 12, // Common number of layers for BERT-like models
@@ -159,6 +159,15 @@ namespace SimpleTransformer.Model
             return loss;
         }
 
+        public async Task<float> TrainStepAsync(Tensor inputs, Tensor expectedOutputs)
+        {
+            return await Task.Run(() => TrainStep(inputs, expectedOutputs));
+        }
+
+        public async Task<(Tensor logits, Tensor hiddenState)> ForwardAsync(Tensor input)
+        {
+            return await Task.Run(() => Forward(input));
+        }
 
 
         private void ValidateConfig()
@@ -191,6 +200,7 @@ namespace SimpleTransformer.Model
             _embedding = new(Config.VocabSize, Config.EmbeddingSize);
             _outputProjection = new LinearLayer(Config.EmbeddingSize, Config.VocabSize);
             _position = new(Config.EmbeddingSize, Config.MaxSequenceLength);
+            _loss = new CrossEntropyLoss();
             _optimizer = new SgdOptimizer(Config.LearningRate);
 
             Log.Information($@"Current configuration:

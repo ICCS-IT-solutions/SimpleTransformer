@@ -1,13 +1,14 @@
 using System.ComponentModel;
+using Serilog;
 using SimpleTransformer.Model.Extensions;
 
 namespace SimpleTransformer.Model
 {
     public class ScaledDotProductAttention
     {
-        private Tensor? _lastQ;
-        private Tensor? _lastK;
-        private Tensor? _lastV;
+        private readonly List<Tensor> _lastQ = new();
+        private readonly List<Tensor> _lastK = new();
+        private readonly List<Tensor> _lastV = new();
         private readonly AttentionWorkspace _workspace;
         private readonly int _headSize;
         public ScaledDotProductAttention(int headSize)
@@ -16,7 +17,17 @@ namespace SimpleTransformer.Model
             _workspace = new AttentionWorkspace();
         }
         public Tensor Forward(Tensor input) => throw new NotImplementedException();
+
         public Tensor Forward(Tensor q, Tensor k, Tensor v, Tensor? mask = null)
+        {
+            return (q.Rank, k.Rank, v.Rank) switch
+            {
+                (2, 2, 2) => ForwardSequence(q, k, v, mask),
+                (3, 3, 3) => ForwardBatch(q, k, v, mask),
+                _ => throw new ArgumentException("Q, K and V must all be matrices."),
+            };
+        }
+        private Tensor ForwardSequence(Tensor q, Tensor k, Tensor v, Tensor? mask = null)
         {
             if (q.Rank != 2 || k.Rank != 2 || v.Rank != 2)
                 throw new ArgumentException("Q, K and V must all be matrices.");
@@ -30,9 +41,9 @@ namespace SimpleTransformer.Model
             if (v.Rows != k.Rows)
                 throw new ArgumentException("Value rows must match key rows.");            
 
-            _lastQ = q;
-            _lastK = k;
-            _lastV = v;
+            _lastQ.Add(q);
+            _lastK.Add(k);
+            _lastV.Add(v);
      
             _workspace.CachedScores = EnsureShape(
                 _workspace.CachedScores,
@@ -81,7 +92,74 @@ namespace SimpleTransformer.Model
 
             return _workspace.CachedOutput;
         }
+        private Tensor ForwardBatch(
+            Tensor q,
+            Tensor k,
+            Tensor v,
+            Tensor? mask = null)
+        {
+            _lastQ.Clear();
+            _lastK.Clear();
+            _lastV.Clear();
+            Tensor output =
+                new Tensor(
+                    q.Layers,
+                    q.Rows,
+                    v.Cols);
+
+            for (int b = 0; b < q.Layers; b++)
+            {
+                Tensor qSlice =
+                    TensorUtilities.GetLayer(q, b);
+
+                Tensor kSlice =
+                    TensorUtilities.GetLayer(k, b);
+
+                Tensor vSlice =
+                    TensorUtilities.GetLayer(v, b);
+
+                Tensor? maskSlice = null;
+
+                if (mask != null)
+                    maskSlice =
+                        TensorUtilities.GetLayer(mask, b);
+
+                Tensor result =
+                    ForwardSequence(
+                        qSlice,
+                        kSlice,
+                        vSlice,
+                        maskSlice);
+
+                TensorUtilities.SetLayer(
+                    output,
+                    b,
+                    result);
+            }
+
+            return output;
+        }
         public (Tensor dQ, Tensor dK, Tensor dV) Backward(Tensor outputGradient)
+        {
+            switch (outputGradient.Rank)
+            {
+                case 2:
+                {
+                    var q = _lastQ[0];
+                    var k = _lastK[0];
+                    var v = _lastV[0];
+
+                    return BackwardSequence(outputGradient, q, k, v);
+                }
+
+                case 3:
+                    return BackwardBatch(outputGradient);
+
+                default:
+                    throw new ArgumentException("Q, K and V must all be matrices.");
+            }
+        }
+        private (Tensor dQ, Tensor dK, Tensor dV) BackwardSequence(Tensor outputGradient, Tensor? q = null, Tensor? k = null, Tensor? v = null)
         {
             if (_lastQ == null ||
                 _lastK == null ||
@@ -102,8 +180,8 @@ namespace SimpleTransformer.Model
 
             _workspace.CachedDV = EnsureShape(
                 _workspace.CachedDV,
-                _lastV.Rows,
-                _lastV.Cols);
+                _lastV[0].Rows,
+                _lastV[0].Cols);
 
             TensorMath.MatrixMultiplyInto(
                 _workspace.CachedWeights,
@@ -113,10 +191,10 @@ namespace SimpleTransformer.Model
             _workspace.CachedV =
                 EnsureTransposeBuffer(
                     _workspace.CachedV,
-                    _lastV);
+                    _lastV[0]);
 
             TensorUtilities.TransposeInto(
-                _lastV,
+                _lastV[0],
                 _workspace.CachedV);
 
             _workspace.CachedDWeights =
@@ -146,11 +224,11 @@ namespace SimpleTransformer.Model
             _workspace.CachedDQ = EnsureShape(
                 _workspace.CachedDQ,
                 _workspace.CachedDScores.Rows,
-                _lastK.Cols);
+                _lastK[0].Cols);
 
             TensorMath.MatrixMultiplyInto(
                 _workspace.CachedDScores,
-                _lastK,
+                _lastK[0],
                 _workspace.CachedDQ);
       
             _workspace.CachedScores =
@@ -164,15 +242,56 @@ namespace SimpleTransformer.Model
 
             _workspace.CachedDK = EnsureShape(
                 _workspace.CachedDK,
-                _lastK.Rows,
-                _lastK.Cols);
+                _lastK[0].Rows,
+                _lastK[0].Cols);
 
             TensorMath.MatrixMultiplyInto(
                 _workspace.CachedScores,
-                _lastQ,
+                _lastQ[0],
                 _workspace.CachedDK);
             
             return (_workspace.CachedDQ, _workspace.CachedDK, _workspace.CachedDV);
+        }
+        private (Tensor dQ, Tensor dK, Tensor dV)
+        BackwardBatch(Tensor outputGradient)
+        {
+            Log.Information("[ScaledDotProductAttention.BackwardBatch] Started backpropagation...");
+            Tensor dQ =
+                new Tensor(
+                    outputGradient.Layers,
+                    outputGradient.Rows,
+                    outputGradient.Cols);
+
+            Tensor dK =
+                new Tensor(
+                    outputGradient.Layers,
+                    outputGradient.Rows,
+                    outputGradient.Cols);
+
+            Tensor dV =
+                new Tensor(
+                    outputGradient.Layers,
+                    outputGradient.Rows,
+                    outputGradient.Cols);
+
+            for (int b = 0; b < outputGradient.Layers; b++)
+            {
+                Tensor gradSlice =
+                    TensorUtilities.GetLayer(outputGradient, b);
+
+                var (dq, dk, dv) =
+                    BackwardSequence(
+                        gradSlice,
+                        _lastQ[b],
+                        _lastK[b],
+                        _lastV[b]);
+
+                TensorUtilities.SetLayer(dQ, b, dq);
+                TensorUtilities.SetLayer(dK, b, dk);
+                TensorUtilities.SetLayer(dV, b, dv);
+            }
+
+            return (dQ, dK, dV);
         }
         private static Tensor EnsureTransposeBuffer(
             Tensor? buffer,

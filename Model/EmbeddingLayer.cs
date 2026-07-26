@@ -33,52 +33,126 @@ namespace SimpleTransformer.Model
             {
                 _embeddings.Data[i] = (float)_random.NextDouble() * 2 * limit - limit;
             }
-        }  
+        }
         public Tensor Forward(Tensor input)
         {
-            if(input.Rank != 1) 
-                throw new ArgumentException("Embedding layer expects a vector of token ids.");
-            //Cache the input
+            if (input.Rank != 1 && input.Rank != 2)
+                throw new ArgumentException(
+                    "Embedding layer expects a rank 1 or rank 2 tensor.");
+
             _lastInput = input;
-            //Create the output tensor.
-            var output = new Tensor(input.Length, _embeddingSize);
-            //For every token:
-            for (int i = 0; i < input.Length; i++)
+
+            int batchSize;
+            int sequenceLength;
+
+            if (input.Rank == 1)
             {
-                float value = input[i];
-
-                if (value != MathF.Floor(value))
-                    throw new ArgumentException("Token IDs must be integers.");
-
-                int tokenId = (int)value;
-
-                //Make sure the token id is valid
-                if (tokenId < 0 || tokenId >= _vocabSize)
-                {
-                    throw new ArgumentException($"Token ID {tokenId} is outside of the vocabulary.");
-                }
-                //Copy the embedding row to the output
-                RowUtilities.CopyRowInPlace(_embeddings, tokenId, output, i);
+                batchSize = 1;
+                sequenceLength = input.Length;
             }
+            else
+            {
+                batchSize = input.Rows;
+                sequenceLength = input.Cols;
+            }
+
+            Tensor output =
+                input.Rank == 1
+                    ? new Tensor(sequenceLength, _embeddingSize)
+                    : new Tensor(batchSize, sequenceLength, _embeddingSize);
+
+            if (input.Rank == 1)
+            {
+                for (int s = 0; s < sequenceLength; s++)
+                {
+                    int tokenId = (int)input[s];
+
+                    if (tokenId < 0 || tokenId >= _vocabSize)
+                        throw new ArgumentException(
+                            $"Token ID {tokenId} is outside of the vocabulary.");
+
+                    RowUtilities.CopyRowInPlace(
+                        _embeddings,
+                        tokenId,
+                        output,
+                        s);
+                }
+            }
+            else
+            {
+                for (int b = 0; b < batchSize; b++)
+                {
+                    for (int s = 0; s < sequenceLength; s++)
+                    {
+                        int tokenId = (int)input[b, s];
+
+                        if (tokenId < 0 || tokenId >= _vocabSize)
+                            throw new ArgumentException(
+                                $"Token ID {tokenId} is outside of the vocabulary.");
+
+                        RowUtilities.CopyRowInPlace(
+                            _embeddings,
+                            tokenId,
+                            output,
+                            b,
+                            s);      // <-- new overload
+                    }
+                }
+            }
+
             return output;
         }
 
         public Tensor Backward(Tensor gradient)
         {
-            //Check to see that last input is not null
-            if(_lastInput == null) throw new InvalidOperationException("Last input is null.");
+            if (_lastInput == null)
+                throw new InvalidOperationException(
+                    "Last input is null.");
 
-            TensorUtilities.ValidateTensorShape(gradient, _lastInput.Length, _embeddingSize);
-
-            for (int row = 0; row < _lastInput.Length; row++)
+            if (_lastInput.Rank == 1)
             {
-                int tokenId = (int)_lastInput[row];
-                
-                RowUtilities.AddRowInPlace(gradient, row, _embeddingGradient, tokenId);
-            }
-            return new Tensor(_lastInput.Length);
-        }
+                TensorUtilities.ValidateTensorShape(
+                    gradient,
+                    _lastInput.Length,
+                    _embeddingSize);
 
+                for (int s = 0; s < _lastInput.Length; s++)
+                {
+                    int tokenId = (int)_lastInput[s];
+
+                    RowUtilities.AddRowInPlace(
+                        gradient,
+                        s,
+                        _embeddingGradient,
+                        tokenId);
+                }
+
+                return new Tensor(_lastInput.Shape);
+            }
+
+            TensorUtilities.ValidateTensorShape(
+                gradient,
+                _lastInput.Rows, 
+                _lastInput.Cols, 
+                _embeddingSize);
+
+            for (int b = 0; b < _lastInput.Rows; b++)
+            {
+                for (int s = 0; s < _lastInput.Cols; s++)
+                {
+                    int tokenId = (int)_lastInput[b, s];
+
+                    RowUtilities.AddStackedRowInPlace(
+                        gradient,
+                        b,
+                        s,
+                        _embeddingGradient,
+                        tokenId);
+                }
+            }
+
+            return new Tensor(_lastInput.Shape);
+        }
         public void ZeroGradients()
         {
             TensorUtilities.Fill(_embeddingGradient, 0f);            

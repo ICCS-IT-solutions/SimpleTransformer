@@ -40,6 +40,15 @@ namespace SimpleTransformer.Model
         public Tensor Forward(Tensor input) => Forward(input, null);
         public Tensor Forward(Tensor input, Tensor? mask = null)
         {
+            return input.Rank switch
+            {
+                2 => ForwardSequence(input, mask),
+                3 => ForwardBatch(input, mask),
+                _ => throw new ArgumentException("Input must be rank 2 or rank 3.")
+            };
+        }
+        private Tensor ForwardSequence(Tensor input, Tensor? mask = null)
+        {
             var outputs = new List<Tensor>();
 
             //For each head, get the output from the .Forward method, concatenate them and return the concatenated output.
@@ -53,6 +62,36 @@ namespace SimpleTransformer.Model
 
             return _outputProjection.Forward(concatenated);
         }
+        private Tensor ForwardBatch(Tensor input, Tensor? mask)
+        {
+            Tensor output =
+                new Tensor(
+                    input.Layers,
+                    input.Rows,
+                    input.Cols);
+
+            for (int b = 0; b < input.Layers; b++)
+            {
+                Tensor inputSlice =
+                    TensorUtilities.GetLayer(input, b);
+
+                Tensor? maskSlice = null;
+
+                if (mask != null)
+                    maskSlice =
+                        TensorUtilities.GetLayer(mask, b);
+
+                Tensor result =
+                    ForwardSequence(inputSlice, maskSlice);
+
+                TensorUtilities.SetLayer(
+                    output,
+                    b,
+                    result);
+            }
+
+            return output;
+        }        
         public void ZeroGradients()
         {
             foreach (var head in _heads)
@@ -64,6 +103,15 @@ namespace SimpleTransformer.Model
         // Not yet ready to implement the Backward() method in any of the layer classes. 
         // This can wait until I have the bulk of the code written and can start testing inferences against the untrained model just to see if it outputs anything.
         public Tensor Backward(Tensor gradient)
+        {
+            return gradient.Rank switch
+            {
+                2 => BackwardSequence(gradient),
+                3 => BackwardBatch(gradient),
+                _ => throw new ArgumentException("Input must be rank 2 or rank 3.")
+            };
+        }
+        private Tensor BackwardSequence(Tensor gradient)
         {
             Tensor dConcat =
                 _outputProjection.Backward(gradient);
@@ -97,9 +145,33 @@ namespace SimpleTransformer.Model
                 //Add the dInput data to the inputGradient
                 for (int j = 0; j < inputGradientData.Length; j++)
                     inputGradientData[j] += dInputData[j];
-            }
+            }            
             
             return inputGradient;
         }
+        private Tensor BackwardBatch(Tensor gradient)
+        {
+            Tensor output =
+                new Tensor(
+                    gradient.Layers,
+                    gradient.Rows,
+                    gradient.Cols);
+
+            for (int b = 0; b < gradient.Layers; b++)
+            {
+                Tensor gradSlice =
+                    TensorUtilities.GetLayer(gradient, b);
+
+                Tensor result =
+                    BackwardSequence(gradSlice);
+
+                TensorUtilities.SetLayer(
+                    output,
+                    b,
+                    result);
+            }
+
+            return output;
+        }        
     }
 }

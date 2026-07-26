@@ -221,13 +221,38 @@ namespace SimpleTransformer.Model.Extensions
 
             int rows = a.Rows;
             int cols = a.Cols;
-
-            for (int i = 0; i < rows; i++)
+            int layers = a.Layers;
+            switch(a.Rank)
             {
-                for (int j = 0; j < cols; j++)
-                {
-                    a[i, j] += b[i, j];
-                }
+                case 1:
+                    for (int i = 0; i < rows; i++)
+                    {
+                        a[i] += b[i];
+                    }
+                    break;
+                case 2:
+                    for (int i = 0; i < rows; i++)
+                    {
+                        for (int j = 0; j < cols; j++)
+                        {
+                            a[i, j] += b[i, j];
+                        }
+                    }
+                    break;
+                case 3:
+                    for (int layer = 0; layer < layers; layer++)
+                    {
+                        for (int row = 0; row < rows; row++)
+                        {
+                            for (int col = 0; col < cols; col++)
+                            {
+                                a[layer, row, col] += b[layer, row, col];
+                            }
+                        }
+                    }
+                    break;
+                default:
+                    throw new ArgumentException("Tensor rank not supported.");
             }
         }
 

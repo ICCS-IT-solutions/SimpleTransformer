@@ -9,15 +9,42 @@ namespace SimpleTransformer.Model.Extensions
 
         public static void ValidateSameShape(Tensor a, Tensor b)
         {
-            if (a.Rank != 2)
-                throw new ArgumentException("First tensor must be a matrix.");
-
-            if (b.Rank != 2)
-                throw new ArgumentException("Second tensor must be a matrix.");
-
-            if (a.Rows != b.Rows || a.Cols != b.Cols)
+            if (a.Rank != b.Rank)
                 throw new ArgumentException(
-                    $"Tensor dimensions do not match ({a.Rows}x{a.Cols}) vs ({b.Rows}x{b.Cols}).");
+                    $"Tensor ranks do not match ({a.Rank} vs {b.Rank}).");
+
+            switch (a.Rank)
+            {
+                case 2:
+
+                    if (a.Rows != b.Rows ||
+                        a.Cols != b.Cols)
+                    {
+                        throw new ArgumentException(
+                            $"Tensor dimensions do not match " +
+                            $"({a.Rows}x{a.Cols}) vs ({b.Rows}x{b.Cols}).");
+                    }
+
+                    break;
+
+                case 3:
+
+                    if (a.Layers != b.Layers ||
+                        a.Rows   != b.Rows   ||
+                        a.Cols   != b.Cols)
+                    {
+                        throw new ArgumentException(
+                            $"Tensor dimensions do not match " +
+                            $"({a.Layers}x{a.Rows}x{a.Cols}) vs " +
+                            $"({b.Layers}x{b.Rows}x{b.Cols}).");
+                    }
+
+                    break;
+
+                default:
+                    throw new ArgumentException(
+                        "Only Rank 2 and Rank 3 tensors are supported.");
+            }
         }
         public static void ValidateTensorShape(Tensor tensor, int rows, int cols)
         {
@@ -27,6 +54,25 @@ namespace SimpleTransformer.Model.Extensions
             if (tensor.Rows != rows || tensor.Cols != cols)
                 throw new ArgumentException($"Tensor dimensions do not match ({tensor.Rows}x{tensor.Cols}) vs ({rows}x{cols}).");
         }
+        public static void ValidateTensorShape(
+            Tensor tensor,
+            int layers,
+            int rows,
+            int cols)
+        {
+            if (tensor.Rank != 3)
+                throw new ArgumentException("Tensor must be rank 3.");
+
+            if (tensor.Layers != layers ||
+                tensor.Rows   != rows ||
+                tensor.Cols   != cols)
+            {
+                throw new ArgumentException(
+                    $"Tensor dimensions do not match " +
+                    $"({tensor.Layers} x {tensor.Rows} x {tensor.Cols}) vs " +
+                    $"({layers} x {rows} x {cols}).");
+            }
+        }       
 
         public static void ValidateTensorIsMatrix(Tensor tensor)
         {
@@ -34,16 +80,36 @@ namespace SimpleTransformer.Model.Extensions
                 throw new ArgumentException("Tensor must be a matrix.");
         }
 
-        public static void ValidatePredictionAndTarget(Tensor prediction, Tensor target)
+        public static void ValidatePredictionAndTarget(
+            Tensor prediction,
+            Tensor target)
         {
-            if (prediction.Rank != 2)
-                throw new ArgumentException("Prediction must be a matrix.");
+            // Sequence inference
+            if (prediction.Rank == 2 && target.Rank == 1)
+            {
+                if (prediction.Rows != target.Length)
+                    throw new ArgumentException(
+                        "Prediction and target lengths do not match.");
 
-            if (target.Rank != 1)
-                throw new ArgumentException("Target must be a vector.");
+                return;
+            }
 
-            if (prediction.Rows != target.Length)
-                throw new ArgumentException("Prediction and target lengths do not match.");
+            // Mini-batch training
+            if (prediction.Rank == 3 && target.Rank == 2)
+            {
+                if (prediction.Layers != target.Rows)
+                    throw new ArgumentException(
+                        "Batch sizes do not match.");
+
+                if (prediction.Rows != target.Cols)
+                    throw new ArgumentException(
+                        "Sequence lengths do not match.");
+
+                return;
+            }
+
+            throw new ArgumentException(
+                $"Unsupported prediction/target ranks ({prediction.Rank} and {target.Rank}).");
         }
 
         public static void ValidateSequenceLength(int sequenceLength)
@@ -54,6 +120,74 @@ namespace SimpleTransformer.Model.Extensions
 
         #endregion
  #region Utilities
+
+        public static Tensor GetRow(Tensor source, int row)
+        {
+            if (source.Rank != 2)
+                throw new ArgumentException("Source must be a matrix.");
+
+            if (row < 0 || row >= source.Rows)
+                throw new ArgumentOutOfRangeException(nameof(row));
+
+            Tensor result = new Tensor(source.Cols);
+
+            Array.Copy(
+                source.Data,
+                row * source.Cols,
+                result.Data,
+                0,
+                source.Cols);
+
+            return result;
+        }
+           
+        public static Tensor GetLayer(Tensor source, int layer)
+        {
+            if (source.Rank != 3)
+                throw new ArgumentException("Source must be a stacked matrix.");
+
+            if (layer < 0 || layer >= source.Layers)
+                throw new ArgumentOutOfRangeException(nameof(layer));
+
+            Tensor result = new Tensor(source.Rows, source.Cols);
+
+            int offset = layer * source.Rows * source.Cols;
+
+            Array.Copy(
+                source.Data,
+                offset,
+                result.Data,
+                0,
+                result.Data.Length);
+
+            return result;
+        }
+        public static void SetLayer(Tensor destination, int layer, Tensor value)
+        {
+            if (destination.Rank != 3)
+                throw new ArgumentException("Destination must be a stacked matrix.");
+
+            if (value.Rank != 2)
+                throw new ArgumentException("Value must be a matrix.");
+
+            if (layer < 0 || layer >= destination.Layers)
+                throw new ArgumentOutOfRangeException(nameof(layer));
+
+            if (value.Rows != destination.Rows ||
+                value.Cols != destination.Cols)
+            {
+                throw new ArgumentException("Matrix dimensions do not match.");
+            }
+
+            int offset = layer * destination.Rows * destination.Cols;
+
+            Array.Copy(
+                value.Data,
+                0,
+                destination.Data,
+                offset,
+                value.Data.Length);
+        }        
 
         public static void CopyVector(ReadOnlySpan<float> src, Span<float> dst)
         {
@@ -117,7 +251,19 @@ namespace SimpleTransformer.Model.Extensions
             }
         }
 
-        public static Tensor ConcatenateColumns(IReadOnlyList<Tensor> tensors) => ConcatenateColumns(tensors.AsEnumerable());
+        public static Tensor ConcatenateColumns(IReadOnlyList<Tensor> tensors)
+        {
+            switch(tensors[0].Rank)
+            {
+                case 2:
+                    return ConcatenateColumns(tensors.AsEnumerable());
+                case 3:
+                    return ConcatenateColumnsBatch(tensors.AsEnumerable());
+                default:
+                    throw new ArgumentException("All tensors must be matrices.");
+            }
+        }
+
         public static Tensor ConcatenateColumns(IEnumerable<Tensor> tensors)
         {
             var list = tensors.ToList();
@@ -159,6 +305,60 @@ namespace SimpleTransformer.Model.Extensions
 
             return res;
         }
+        public static Tensor ConcatenateColumnsBatch(IEnumerable<Tensor> tensors)
+        {
+            var list = tensors.ToList();
+
+            if (list.Count == 0)
+                throw new ArgumentException("List must not be empty.");
+
+            int layers = list[0].Layers;
+            int rows   = list[0].Rows;
+
+            foreach (var tensor in list)
+            {
+                if (tensor.Rank != 3)
+                    throw new ArgumentException("All tensors must be Rank 3.");
+
+                if (tensor.Layers != layers)
+                    throw new ArgumentException("All tensors must have the same batch size.");
+
+                if (tensor.Rows != rows)
+                    throw new ArgumentException("All tensors must have the same sequence length.");
+            }
+
+            int totalCols = list.Sum(t => t.Cols);
+
+            Tensor result =
+                new Tensor(layers, rows, totalCols);
+
+            for (int layer = 0; layer < layers; layer++)
+            {
+                int colOffset = 0;
+
+                foreach (var tensor in list)
+                {
+                    for (int row = 0; row < rows; row++)
+                    {
+                        Array.Copy(
+                            tensor.Data,
+                            layer * tensor.Rows * tensor.Cols +
+                            row   * tensor.Cols,
+
+                            result.Data,
+                            layer * result.Rows * result.Cols +
+                            row   * result.Cols +
+                            colOffset,
+
+                            tensor.Cols);
+                    }
+
+                    colOffset += tensor.Cols;
+                }
+            }
+
+            return result;
+        }        
         #endregion
 
         #region Softmax

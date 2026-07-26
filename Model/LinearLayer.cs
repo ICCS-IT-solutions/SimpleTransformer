@@ -1,3 +1,4 @@
+using Serilog;
 using SimpleTransformer.Model.Extensions;
 
 namespace SimpleTransformer.Model
@@ -66,9 +67,21 @@ namespace SimpleTransformer.Model
                 Array.Clear(_bias!.Data);
             }
         }
-
         public Tensor Forward(Tensor input)
         {
+            
+            // Log.Information($"[LinearLayer.Forward{(input.Rank == 2 ? "Sequence" : "Batch")}] Started forward propagation...");
+            return input.Rank switch
+            {
+                2 => ForwardSequence(input),
+                3 => ForwardBatch(input),
+                _ => throw new ArgumentException("Linear layer expects rank 2 or rank 3.")
+            };
+        }
+
+        private Tensor ForwardSequence(Tensor input)
+        {
+            // var watch = System.Diagnostics.Stopwatch.StartNew();
             if (input.Rank != 2)
                 throw new ArgumentException("Input must be a matrix.");
 
@@ -100,10 +113,79 @@ namespace SimpleTransformer.Model
                     }
                 }
             }
+
+            // watch.Stop();
+            // Log.Information($"[LinearLayer.ForwardSequence] Finished forward propagation in {watch.ElapsedMilliseconds} ms.");
             return output;
         }
-        
+        private Tensor ForwardBatch(Tensor input)
+        {
+            // var watch = System.Diagnostics.Stopwatch.StartNew();
+            if (input.Rank != 3)
+                throw new ArgumentException();
+
+            if (input.Cols != _inputSize)
+                throw new ArgumentException();
+
+            _lastInput = input;
+
+            if (_transposeDirtyState)
+            {
+                TensorUtilities.TransposeInto(_weights, _cachedWeights);
+                _transposeDirtyState = false;
+            }
+
+            Tensor output =
+                new Tensor(
+                    input.Layers,
+                    input.Rows,
+                    _outputSize);
+
+            for (int b = 0; b < input.Layers; b++)
+            {
+                Tensor inputSlice =
+                    TensorUtilities.GetLayer(input, b);
+
+                Tensor outputSlice =
+                    TensorMath.MatrixMultiply(
+                        inputSlice,
+                        _cachedWeights);
+
+                TensorUtilities.SetLayer(
+                    output,
+                    b,
+                    outputSlice);
+            }
+
+            if (_useBias)
+            {
+                for (int b = 0; b < output.Layers; b++)
+                {
+                    for (int r = 0; r < output.Rows; r++)
+                    {
+                        for (int c = 0; c < output.Cols; c++)
+                        {
+                            output[b,r,c] += _bias![c];
+                        }
+                    }
+                }
+            }
+
+            // watch.Stop();
+            // Log.Information($"[LinearLayer.ForwardBatch] Finished forward propagation in {watch.ElapsedMilliseconds} ms.");
+            return output;
+        }        
+
         public Tensor Backward(Tensor gradient)
+        {
+            return gradient.Rank switch
+            {
+                2 => BackwardSequence(gradient),
+                3 => BackwardBatch(gradient),
+                _ => throw new ArgumentException("Linear layer expects rank 2 or rank 3.")
+            };
+        }
+        private Tensor BackwardSequence(Tensor gradient)
         {
             if(_lastInput == null) throw new InvalidOperationException("Last input is null.");
 
@@ -150,6 +232,67 @@ namespace SimpleTransformer.Model
                 gradient,
                 _weights);
         }
+        private Tensor BackwardBatch(Tensor gradient)
+        {
+            Log.Information("[LinearLayer.BackwardBatch] Started backpropagation...");
+            if (_lastInput == null)
+                throw new InvalidOperationException();
+
+            Tensor input = _lastInput;
+
+            Tensor inputGradient =
+                new Tensor(
+                    gradient.Layers,
+                    gradient.Rows,
+                    _inputSize);
+
+            for (int b = 0; b < gradient.Layers; b++)
+            {
+                Tensor gradSlice =
+                    TensorUtilities.GetLayer(gradient, b);
+
+                Tensor inputSlice =
+                    TensorUtilities.GetLayer(input, b);
+
+                Tensor gradTranspose =
+                    TensorUtilities.Transpose(gradSlice);
+
+                Tensor dW =
+                    TensorMath.MatrixMultiply(
+                        gradTranspose,
+                        inputSlice);
+
+                TensorMath.ElementWiseAddInPlace(
+                    _weightGradient,
+                    dW);
+
+                Tensor dInput =
+                    TensorMath.MatrixMultiply(
+                        gradSlice,
+                        _weights);
+
+                TensorUtilities.SetLayer(
+                    inputGradient,
+                    b,
+                    dInput);
+            }
+
+            if (_useBias)
+            {
+                for (int b = 0; b < gradient.Layers; b++)
+                {
+                    for (int r = 0; r < gradient.Rows; r++)
+                    {
+                        for (int c = 0; c < gradient.Cols; c++)
+                        {
+                            _biasGradient![c] += gradient[b,r,c];
+                        }
+                    }
+                }
+            }
+
+            return inputGradient;
+        }        
 
         public void ZeroGradients()
         {

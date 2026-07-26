@@ -33,24 +33,49 @@ namespace SimpleTransformer.Model.Extensions
 
         public static void AddEncodingInPlace(Tensor input, Tensor encoding)
         {
-            if (input.Rank != 2)
-                throw new ArgumentException("Input must be a matrix.");
-
-            if (encoding.Rank != 2)
-                throw new ArgumentException("Encoding must be a matrix.");
-
-            if (encoding.Rows < input.Rows)
-                throw new ArgumentException("Encoding does not contain enough positions.");
-
-            if (encoding.Cols != input.Cols)
-                throw new ArgumentException("Embedding sizes do not match.");
-
-            for (int row = 0; row < input.Rows; row++)
+            switch (input.Rank)
             {
-                for (int col = 0; col < input.Cols; col++)
-                {
-                    input[row, col] += encoding[row, col];
-                }
+                case 2:
+
+                    if (encoding.Rows < input.Rows)
+                        throw new ArgumentException("Encoding does not contain enough positions.");
+
+                    if (encoding.Cols != input.Cols)
+                        throw new ArgumentException("Embedding sizes do not match.");
+
+                    for (int row = 0; row < input.Rows; row++)
+                    {
+                        for (int col = 0; col < input.Cols; col++)
+                        {
+                            input[row, col] += encoding[row, col];
+                        }
+                    }
+
+                    break;
+
+                case 3:
+
+                    if (encoding.Rows < input.Rows)
+                        throw new ArgumentException("Encoding does not contain enough positions.");
+
+                    if (encoding.Cols != input.Cols)
+                        throw new ArgumentException("Embedding sizes do not match.");
+
+                    for (int batch = 0; batch < input.Layers; batch++)
+                    {
+                        for (int row = 0; row < input.Rows; row++)
+                        {
+                            for (int col = 0; col < input.Cols; col++)
+                            {
+                                input[batch, row, col] += encoding[row, col];
+                            }
+                        }
+                    }
+
+                    break;
+
+                default:
+                    throw new ArgumentException("Input must be rank 2 or rank 3.");
             }
         }
     }

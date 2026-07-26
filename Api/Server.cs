@@ -67,7 +67,7 @@ namespace SimpleTransformer.Api
                         NumLayers = 12,
                         NumHeads = 12,
                         FeedForwardSize = 3072,
-                        MaxSequenceLength = 512,
+                        MaxSequenceLength = 128,
                         LearningRate = 0.001f,
                         BatchSize = 8,
                         Epochs = 10,
@@ -78,8 +78,9 @@ namespace SimpleTransformer.Api
                     watch.Stop();
                     return model;  
                 });
-                
+
                 //Services using the model should be created after the model is ready.
+                builder.Services.AddScoped<TrainingService>();
                 builder.Services.AddScoped<InferService>();
 
                 var app = builder.Build();

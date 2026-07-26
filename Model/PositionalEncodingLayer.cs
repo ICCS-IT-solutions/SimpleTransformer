@@ -18,9 +18,16 @@ namespace SimpleTransformer.Model
         }
         public Tensor Forward(Tensor input)
         {
-            if (input.Rank != 2)
-                throw new ArgumentException("Expected a matrix.");
-
+            return input.Rank switch
+            {
+                2 => ForwardSequence(input),
+                3 => ForwardBatch(input),
+                _ => throw new ArgumentException(
+                    "Expected a rank 2 or rank 3 tensor.")
+            };
+        }
+        private Tensor ForwardSequence(Tensor input)
+        {
             if (input.Cols != _embeddingSize)
                 throw new ArgumentException("Incorrect embedding size.");
 
@@ -31,15 +38,38 @@ namespace SimpleTransformer.Model
 
             Tensor output = input.Clone();
 
-            PositionalEncodingUtilities.AddEncodingInPlace(output, _encoding);
+            PositionalEncodingUtilities.AddEncodingInPlace(
+                output,
+                _encoding);
+
+            return output;
+        }        
+        private Tensor ForwardBatch(Tensor input)
+        {
+            if (input.Shape[2] != _embeddingSize)
+                throw new ArgumentException("Incorrect embedding size.");
+
+            if (input.Shape[1] > _maxSequenceLength)
+                throw new ArgumentException("Sequence exceeds maximum length.");
+
+            _lastInput = input;
+
+            Tensor output = input.Clone();
+
+            PositionalEncodingUtilities.AddEncodingInPlace(
+                output,
+                _encoding);
 
             return output;
         }
-
         public Tensor Backward(Tensor gradient)
         {
-            if (gradient.Rank != 2)
-                throw new ArgumentException("Gradient must be a matrix.");
+            if (gradient.Rank != 2 &&
+                gradient.Rank != 3)
+            {
+                throw new ArgumentException(
+                    "Gradient must be rank 2 or rank 3.");
+            }
 
             return gradient.Clone();
         }

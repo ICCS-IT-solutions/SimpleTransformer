@@ -17,6 +17,7 @@ namespace SimpleTransformer.Model
             switch (Rank)
             {
                 case 1:
+                    Cols = shape[0];
                     break;
 
                 case 2:

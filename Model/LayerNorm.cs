@@ -1,3 +1,4 @@
+using Serilog;
 using SimpleTransformer.Model.Extensions;
 
 namespace SimpleTransformer.Model
@@ -45,6 +46,15 @@ namespace SimpleTransformer.Model
             TensorUtilities.Fill(_gradientBeta, 0.0f);
         }
         public Tensor Forward(Tensor input)
+        {
+            return input.Rank switch
+            {
+                2 => ForwardSequence(input),
+                3 => ForwardBatch(input),
+                _ => throw new ArgumentException("LayerNorm expects Rank 2 or Rank 3.")
+            };
+        }
+        private Tensor ForwardSequence(Tensor input)
         {
             if(input.Rank != 2) throw new ArgumentException("LayerNorm expects a matrix.");
 
@@ -94,7 +104,40 @@ namespace SimpleTransformer.Model
             }
             return output;
         }
+        private Tensor ForwardBatch(Tensor input)
+        {
+            Tensor output =
+                new Tensor(
+                    input.Layers,
+                    input.Rows,
+                    input.Cols);
+
+            for (int layer = 0; layer < input.Layers; layer++)
+            {
+                Tensor slice =
+                    TensorUtilities.GetLayer(input, layer);
+
+                Tensor result =
+                    ForwardSequence(slice);
+
+                TensorUtilities.SetLayer(
+                    output,
+                    layer,
+                    result);
+            }
+
+            return output;
+        }        
         public Tensor Backward(Tensor gradient)
+        {
+            return gradient.Rank switch
+            {
+                2 => BackwardSequence(gradient),
+                3 => BackwardBatch(gradient),
+                _ => throw new ArgumentException("Linear layer expects rank 2 or rank 3.")
+            };
+        }
+        private Tensor BackwardSequence(Tensor gradient)
         {
             ZeroGradients();
 
@@ -120,6 +163,31 @@ namespace SimpleTransformer.Model
 
             return inputGradient;
         }
+        private Tensor BackwardBatch(Tensor gradient)
+        {
+            Log.Information("[LayerNorm.BackwardBatch] Started backpropagation...");
+            Tensor output =
+                new Tensor(
+                    gradient.Layers,
+                    gradient.Rows,
+                    gradient.Cols);
+
+            for (int layer = 0; layer < gradient.Layers; layer++)
+            {
+                Tensor slice =
+                    TensorUtilities.GetLayer(gradient, layer);
+
+                Tensor result =
+                    BackwardSequence(slice);
+
+                TensorUtilities.SetLayer(
+                    output,
+                    layer,
+                    result);
+            }
+
+            return output;
+        }        
 
         private (float sumDxHat, float sumDxHatXHat)
             ComputeDerivativeSums(

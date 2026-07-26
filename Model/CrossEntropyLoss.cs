@@ -5,8 +5,50 @@ namespace SimpleTransformer.Model
     public class CrossEntropyLoss : ILossFunction
     {
         private const float Epsilon = 1e-8f;
-        
         public float Forward(Tensor prediction, Tensor target)
+        {
+            return prediction.Rank switch
+            {
+                2 => ForwardSequence(prediction, target),
+                3 => ForwardBatch(prediction, target),
+                _ => throw new ArgumentException(
+                    "Prediction must be rank 2 or rank 3.")
+            };
+        }
+
+        public Tensor Backward(Tensor prediction, Tensor target)
+        {
+            return prediction.Rank switch
+            {
+                2 => BackwardSequence(prediction, target),
+                3 => BackwardBatch(prediction, target),
+                _ => throw new ArgumentException(
+                    "Prediction must be rank 2 or rank 3.")
+            };
+        }
+        private float ForwardBatch(Tensor prediction, Tensor target)
+        {
+            TensorUtilities.ValidatePredictionAndTarget(prediction, target);
+
+            float totalLoss = 0f;
+
+            for (int batch = 0; batch < prediction.Layers; batch++)
+            {
+                Tensor predictionSlice =
+                    TensorUtilities.GetLayer(prediction, batch);
+
+                Tensor targetSlice =
+                    TensorUtilities.GetRow(target, batch);
+
+                totalLoss +=
+                    ForwardSequence(
+                        predictionSlice,
+                        targetSlice);
+            }
+
+            return totalLoss / prediction.Layers;
+        }
+        private float ForwardSequence(Tensor prediction, Tensor target)
         { 
 
             TensorUtilities.ValidatePredictionAndTarget(prediction, target);
@@ -28,8 +70,45 @@ namespace SimpleTransformer.Model
 
             return totalLoss / prediction.Rows;
         }
+        private Tensor BackwardBatch(
+            Tensor prediction,
+            Tensor target)
+        {
+            TensorUtilities.ValidatePredictionAndTarget(prediction, target);
 
-        public Tensor Backward(Tensor prediction, Tensor target)
+            Tensor gradient =
+                new Tensor(
+                    prediction.Layers,
+                    prediction.Rows,
+                    prediction.Cols);
+
+            for (int batch = 0; batch < prediction.Layers; batch++)
+            {
+                Tensor predictionSlice =
+                    TensorUtilities.GetLayer(prediction, batch);
+
+                Tensor targetSlice =
+                    TensorUtilities.GetRow(target, batch);
+
+                Tensor gradSlice =
+                    BackwardSequence(
+                        predictionSlice,
+                        targetSlice);
+
+                TensorUtilities.SetLayer(
+                    gradient,
+                    batch,
+                    gradSlice);
+            }
+
+            TensorMath.ScaleInPlace(
+                gradient,
+                1f / prediction.Layers);
+
+            return gradient;
+        }
+
+        private Tensor BackwardSequence(Tensor prediction, Tensor target)
         {
             TensorUtilities.ValidatePredictionAndTarget(prediction, target);
 
