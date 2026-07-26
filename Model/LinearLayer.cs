@@ -1,5 +1,6 @@
 using Serilog;
 using SimpleTransformer.Model.Extensions;
+using SimpleTransformer.Model.Extensions.Numerics;
 
 namespace SimpleTransformer.Model
 {
@@ -98,7 +99,7 @@ namespace SimpleTransformer.Model
             }
 
             var output =
-                TensorMath.MatrixMultiply(
+                TensorMathSimd.MatrixMultiply(
                     _lastInput,
                     _cachedWeights
                 );
@@ -147,7 +148,7 @@ namespace SimpleTransformer.Model
                     TensorUtilities.GetLayer(input, b);
 
                 Tensor outputSlice =
-                    TensorMath.MatrixMultiply(
+                    TensorMathSimd.MatrixMultiply(
                         inputSlice,
                         _cachedWeights);
 
@@ -209,7 +210,7 @@ namespace SimpleTransformer.Model
                 _cachedGradient);
 
                
-            TensorMath.MatrixMultiplyInto(
+            TensorMathSimd.MatrixMultiplyInto(
                 _cachedGradient,
                 input, _weightGradient);
 
@@ -228,7 +229,7 @@ namespace SimpleTransformer.Model
                     _biasGradient![col] = sum;
                 }
             }
-            return TensorMath.MatrixMultiply(
+            return TensorMathSimd.MatrixMultiply(
                 gradient,
                 _weights);
         }
@@ -258,16 +259,16 @@ namespace SimpleTransformer.Model
                     TensorUtilities.Transpose(gradSlice);
 
                 Tensor dW =
-                    TensorMath.MatrixMultiply(
+                    TensorMathSimd.MatrixMultiply(
                         gradTranspose,
                         inputSlice);
 
-                TensorMath.ElementWiseAddInPlace(
+                TensorMathSimd.ElementWiseAddInPlace(
                     _weightGradient,
                     dW);
 
                 Tensor dInput =
-                    TensorMath.MatrixMultiply(
+                    TensorMathSimd.MatrixMultiply(
                         gradSlice,
                         _weights);
 

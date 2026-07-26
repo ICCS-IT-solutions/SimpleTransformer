@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using Serilog;
 using SimpleTransformer.Model.Extensions;
+using SimpleTransformer.Model.Extensions.Numerics;
 
 namespace SimpleTransformer.Model
 {
@@ -45,8 +46,8 @@ namespace SimpleTransformer.Model
             _lastK.Add(k);
             _lastV.Add(v);
      
-            _workspace.CachedScores = EnsureShape(
-                _workspace.CachedScores,
+            _workspace.CachedScoresTransposed = EnsureShape(
+                _workspace.CachedScoresTransposed,
                 q.Rows,
                 k.Rows);
 
@@ -57,36 +58,36 @@ namespace SimpleTransformer.Model
             //Transpose first and cache, then move on to multiply with transposed.            
             TensorUtilities.TransposeInto(k,_workspace.TransposedKeys);
 
-            TensorMath.MatrixMultiplyWithRightTransposed(
+            TensorMathSimd.MatrixMultiplyInto(
                 q,
                 _workspace.TransposedKeys,
-                _workspace.CachedScores);
+                _workspace.CachedScoresTransposed);
 
             //Scale scores in place by sqrt(headSize) and divide by sqrt(d) in place
-            TensorMath.ScaleInPlace(_workspace.CachedScores, 1.0f / MathF.Sqrt(_headSize));
+            TensorMath.ScaleInPlace(_workspace.CachedScoresTransposed, 1.0f / MathF.Sqrt(_headSize));
 
             if(mask != null)
             {
-                if (mask.Rows != _workspace.CachedScores.Rows || mask.Cols != _workspace.CachedScores.Cols)
+                if (mask.Rows != _workspace.CachedScoresTransposed.Rows || mask.Cols != _workspace.CachedScoresTransposed.Cols)
                 {
                     throw new ArgumentException("Mask dimensions do not match attention scores.");
                 }
-                MaskUtilities.ApplyMaskInPlace(_workspace.CachedScores, mask);
+                MaskUtilities.ApplyMaskInPlace(_workspace.CachedScoresTransposed, mask);
             }
 
-            TensorUtilities.SoftmaxRowsInPlace(_workspace.CachedScores);
+            TensorUtilities.SoftmaxRowsInPlace(_workspace.CachedScoresTransposed);
 
             //Cache last weights after softmax without allocating new memory
-            _workspace.LastWeights = EnsureSameShape(_workspace.LastWeights, _workspace.CachedScores);
-            TensorUtilities.CopyTensor(_workspace.CachedScores, _workspace.LastWeights);
+            _workspace.LastWeights = EnsureSameShape(_workspace.LastWeights, _workspace.CachedScoresTransposed);
+            TensorUtilities.CopyTensor(_workspace.CachedScoresTransposed, _workspace.LastWeights);
 
             _workspace.CachedOutput = EnsureShape(
                 _workspace.CachedOutput,
-                _workspace.CachedScores.Rows,
+                _workspace.CachedScoresTransposed.Rows,
                 v.Cols);
 
-            TensorMath.MatrixMultiplyInto(
-                _workspace.CachedScores,
+            TensorMathSimd.MatrixMultiplyInto(
+                _workspace.CachedScoresTransposed,
                 v,
                 _workspace.CachedOutput);
 
@@ -169,43 +170,43 @@ namespace SimpleTransformer.Model
                     "Forward must be called before Backward.");
             }
             // O = W V
-            _workspace.CachedWeights =
+            _workspace.CachedWeightsTransposed =
                 EnsureTransposeBuffer(
-                    _workspace.CachedWeights,
+                    _workspace.CachedWeightsTransposed,
                     _workspace.LastWeights);
 
             TensorUtilities.TransposeInto(
                 _workspace.LastWeights,
-                _workspace.CachedWeights);
+                _workspace.CachedWeightsTransposed);
 
             _workspace.CachedDV = EnsureShape(
                 _workspace.CachedDV,
                 _lastV[0].Rows,
                 _lastV[0].Cols);
 
-            TensorMath.MatrixMultiplyInto(
-                _workspace.CachedWeights,
+            TensorMathSimd.MatrixMultiplyInto(
+                _workspace.CachedWeightsTransposed,
                 outputGradient,
                 _workspace.CachedDV);
 
-            _workspace.CachedV =
+            _workspace.CachedVTransposed =
                 EnsureTransposeBuffer(
-                    _workspace.CachedV,
+                    _workspace.CachedVTransposed,
                     _lastV[0]);
 
             TensorUtilities.TransposeInto(
                 _lastV[0],
-                _workspace.CachedV);
+                _workspace.CachedVTransposed);
 
             _workspace.CachedDWeights =
                 EnsureShape(
                     _workspace.CachedDWeights,
                     outputGradient.Rows,
-                    _workspace.CachedV.Cols);
+                    _workspace.CachedVTransposed.Cols);
 
-            TensorMath.MatrixMultiplyInto(
+            TensorMathSimd.MatrixMultiplyInto(
                 outputGradient,
-                _workspace.CachedV,
+                _workspace.CachedVTransposed,
                 _workspace.CachedDWeights);
                                     
             // Softmax derivative
@@ -226,27 +227,27 @@ namespace SimpleTransformer.Model
                 _workspace.CachedDScores.Rows,
                 _lastK[0].Cols);
 
-            TensorMath.MatrixMultiplyInto(
+            TensorMathSimd.MatrixMultiplyInto(
                 _workspace.CachedDScores,
                 _lastK[0],
                 _workspace.CachedDQ);
       
-            _workspace.CachedScores =
+            _workspace.CachedScoresTransposed =
                 EnsureTransposeBuffer(
-                    _workspace.CachedScores,
+                    _workspace.CachedScoresTransposed,
                     _workspace.CachedDScores);
 
             TensorUtilities.TransposeInto(
                 _workspace.CachedDScores,
-                _workspace.CachedScores);
+                _workspace.CachedScoresTransposed);
 
             _workspace.CachedDK = EnsureShape(
                 _workspace.CachedDK,
                 _lastK[0].Rows,
                 _lastK[0].Cols);
 
-            TensorMath.MatrixMultiplyInto(
-                _workspace.CachedScores,
+            TensorMathSimd.MatrixMultiplyInto(
+                _workspace.CachedScoresTransposed,
                 _lastQ[0],
                 _workspace.CachedDK);
             
@@ -329,9 +330,9 @@ namespace SimpleTransformer.Model
     
         private sealed class AttentionWorkspace
         {
-            public Tensor CachedV = null!;
-            public Tensor CachedWeights = null!;
-            public Tensor CachedScores = null!;
+            public Tensor CachedVTransposed = null!;
+            public Tensor CachedWeightsTransposed = null!;
+            public Tensor CachedScoresTransposed = null!;
             public Tensor CachedDScores = null!;
             public Tensor CachedDWeights = null!;
             public Tensor CachedDQ = null!;

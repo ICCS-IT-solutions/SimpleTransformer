@@ -4,8 +4,7 @@ using Serilog;
 namespace SimpleTransformer.Model
 {
     public class AttentionHead : ITrainableLayer
-    {   
-        private Tensor? _lastInput;
+    {  
         private readonly LinearLayer _queryProjection;
         private readonly LinearLayer _keyProjection;
         private readonly LinearLayer _valueProjection;
