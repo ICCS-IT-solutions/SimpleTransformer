@@ -1,34 +1,41 @@
 namespace SimpleTransformer.Model
 {
-    public class Tensor
+    public class Tensor : TensorBase
     {
-        public float[] Data { get; }
-        public int[] Shape { get; }
-        public readonly int Rank;
-        public readonly int Layers;
-        public readonly int Rows;
-        public readonly int Cols;
+        private readonly int _rank;
+        private readonly int _rows;
+        private readonly int _cols;
+        private readonly int _layers;
+        private readonly int[] _shape;
+        public override float[] Buffer => Data;
+        public override int Length =>Data.Length;
+        public override int Offset => 0;
+        public override float[] Data { get; }
+        public override int[] Shape => _shape;
+        public override int Rank => _rank;
+        public override int Layers => _layers;
+        public override int Rows => _rows;
+        public override int Cols => _cols;
 
-        public int Length => Data.Length;
         public Tensor(params int[] shape)
         {
-            Shape = shape;
-            Rank = shape.Length;
+            _shape = shape;
+            _rank = shape.Length;
             switch (Rank)
             {
                 case 1:
-                    Cols = shape[0];
+                    _cols = shape[0];
                     break;
 
                 case 2:
-                    Rows = shape[0];
-                    Cols = shape[1];
+                    _rows = shape[0];
+                    _cols = shape[1];
                     break;
 
                 case 3:
-                    Layers = shape[0];
-                    Rows = shape[1];
-                    Cols = shape[2];
+                    _layers = shape[0];
+                    _rows = shape[1];
+                    _cols = shape[2];
                     break;
             }            
             int size = 1;
@@ -40,7 +47,7 @@ namespace SimpleTransformer.Model
             Data = new float[size];
         }
         //Stacked matrix indexer for convenience
-        public float this[int layer, int row, int col]
+        public override float this[int layer, int row, int col]
         {
             get
             {
@@ -59,7 +66,7 @@ namespace SimpleTransformer.Model
             }
         }
         //Matrix indexer for convenience
-        public float this[int row, int col]
+        public override float this[int row, int col]
         {
             get
             {
@@ -78,7 +85,7 @@ namespace SimpleTransformer.Model
             }
         }
         //Vector indexer for convenience
-        public float this[int index]
+        public override float this[int index]
         {
             get
             {

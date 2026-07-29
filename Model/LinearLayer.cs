@@ -31,7 +31,7 @@ namespace SimpleTransformer.Model
             // Initialize weights and biases
             _weights = new Tensor(outputSize, inputSize); //Note to self: Made this consistent with conventional initialisation
             _weightGradient = new Tensor(outputSize, inputSize);
-            _cachedWeights = new Tensor(inputSize, outputSize);
+            _cachedWeights = new Tensor(outputSize, inputSize);
             if (_useBias)
             {
                 _bias = new Tensor(outputSize);
@@ -49,7 +49,7 @@ namespace SimpleTransformer.Model
                 };            
 
             InitWeights();
-            TensorUtilities.TransposeInto(_weights, _cachedWeights);
+            TensorUtilitiesSimd.CopyInto(_weights, _cachedWeights);
         }
         private readonly Random _random = new();
 
@@ -94,12 +94,17 @@ namespace SimpleTransformer.Model
 
             if(_transposeDirtyState == true)
             {
-                TensorUtilities.TransposeInto(_weights, _cachedWeights);
+                TensorUtilitiesSimd.CopyInto(_weights, _cachedWeights);
                 _transposeDirtyState = false;
             }
+            
+            // Log.Information($"_weights      : {_weights.Rows} x {_weights.Cols}");
 
+            // Log.Information($"_cachedWeights: {_cachedWeights.Rows} x {_cachedWeights.Cols}");
+
+            // Log.Information($"input         : {_lastInput.Rows} x {_lastInput.Cols}");
             var output =
-                TensorMathSimd.MatrixMultiply(
+                TensorMathSimd.MatrixMultiplyRightTransposed(
                     _lastInput,
                     _cachedWeights
                 );
@@ -132,7 +137,7 @@ namespace SimpleTransformer.Model
 
             if (_transposeDirtyState)
             {
-                TensorUtilities.TransposeInto(_weights, _cachedWeights);
+                TensorUtilitiesSimd.CopyInto(_weights, _cachedWeights);
                 _transposeDirtyState = false;
             }
 
@@ -148,7 +153,7 @@ namespace SimpleTransformer.Model
                     TensorUtilities.GetLayer(input, b);
 
                 Tensor outputSlice =
-                    TensorMathSimd.MatrixMultiply(
+                    TensorMathSimd.MatrixMultiplyRightTransposed(
                         inputSlice,
                         _cachedWeights);
 
@@ -205,12 +210,12 @@ namespace SimpleTransformer.Model
 
             var input = _lastInput!;
 
-            TensorUtilities.TransposeInto(
-                gradient,
-                _cachedGradient);
+            // TensorUtilitiesSimd.TransposeInto(
+            //     gradient,
+            //     _cachedGradient);
 
                
-            TensorMathSimd.MatrixMultiplyInto(
+            TensorMathSimd.MatrixMultiplyRightTransposedInto(
                 _cachedGradient,
                 input, _weightGradient);
 
@@ -256,7 +261,7 @@ namespace SimpleTransformer.Model
                     TensorUtilities.GetLayer(input, b);
 
                 Tensor gradTranspose =
-                    TensorUtilities.Transpose(gradSlice);
+                    TensorUtilitiesSimd.Transpose(gradSlice);
 
                 Tensor dW =
                     TensorMathSimd.MatrixMultiply(

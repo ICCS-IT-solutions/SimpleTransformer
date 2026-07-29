@@ -1,7 +1,5 @@
 namespace SimpleTransformer.Model.Extensions
 {
-
-    
     // Todo: next steps:
     // Priority work:
     // ✅ Implement embeddings and positional encodings. 

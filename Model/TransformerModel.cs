@@ -1,5 +1,6 @@
 using Serilog;
 using SimpleTransformer.Model.Extensions;
+using SimpleTransformer.Model.Extensions.Numerics;
 
 namespace SimpleTransformer.Model
 {
@@ -94,7 +95,7 @@ namespace SimpleTransformer.Model
         {
             var (logits, hiddenState) = Forward(input);
 
-            var probabilities = TensorUtilities.SoftmaxRows(logits);
+            var probabilities = TensorUtilitiesSimd.SoftmaxRows(logits);
 
             return (TokenizationUtilities.ArgMax(probabilities), logits, probabilities, hiddenState);
         }

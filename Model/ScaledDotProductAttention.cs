@@ -56,7 +56,7 @@ namespace SimpleTransformer.Model
                 k);
 
             //Transpose first and cache, then move on to multiply with transposed.            
-            TensorUtilities.TransposeInto(k,_workspace.TransposedKeys);
+            TensorUtilitiesSimd.TransposeInto(k,_workspace.TransposedKeys);
 
             TensorMathSimd.MatrixMultiplyInto(
                 q,
@@ -75,7 +75,7 @@ namespace SimpleTransformer.Model
                 MaskUtilities.ApplyMaskInPlace(_workspace.CachedScoresTransposed, mask);
             }
 
-            TensorUtilities.SoftmaxRowsInPlace(_workspace.CachedScoresTransposed);
+            TensorUtilitiesSimd.SoftmaxRowsInPlace(_workspace.CachedScoresTransposed);
 
             //Cache last weights after softmax without allocating new memory
             _workspace.LastWeights = EnsureSameShape(_workspace.LastWeights, _workspace.CachedScoresTransposed);
@@ -175,7 +175,7 @@ namespace SimpleTransformer.Model
                     _workspace.CachedWeightsTransposed,
                     _workspace.LastWeights);
 
-            TensorUtilities.TransposeInto(
+            TensorUtilitiesSimd.TransposeInto(
                 _workspace.LastWeights,
                 _workspace.CachedWeightsTransposed);
 
@@ -194,7 +194,7 @@ namespace SimpleTransformer.Model
                     _workspace.CachedVTransposed,
                     _lastV[0]);
 
-            TensorUtilities.TransposeInto(
+            TensorUtilitiesSimd.TransposeInto(
                 _lastV[0],
                 _workspace.CachedVTransposed);
 
@@ -213,7 +213,7 @@ namespace SimpleTransformer.Model
             _workspace.CachedDScores =
                 EnsureSameShape(_workspace.CachedDScores, _workspace.CachedDWeights);
 
-            TensorUtilities.SoftmaxBackwardInto(
+            TensorUtilitiesSimd.SoftmaxBackwardInto(
                 _workspace.CachedDWeights,
                 _workspace.LastWeights,
                 _workspace.CachedDScores);
@@ -237,7 +237,7 @@ namespace SimpleTransformer.Model
                     _workspace.CachedScoresTransposed,
                     _workspace.CachedDScores);
 
-            TensorUtilities.TransposeInto(
+            TensorUtilitiesSimd.TransposeInto(
                 _workspace.CachedDScores,
                 _workspace.CachedScoresTransposed);
 
