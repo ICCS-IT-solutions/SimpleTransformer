@@ -24,17 +24,17 @@ namespace SimpleTransformer.Model
             _project = new LinearLayer(hiddenSize, embeddingSize);   
         }
 
-        public Tensor Forward(Tensor input)
+        public TensorBase Forward(TensorBase input)
         {
-            Tensor x = _expand.Forward(input);
+            TensorBase x = _expand.Forward(input);
             x = _activation.Forward(x);
             x = _project.Forward(x);
 
             return x;
         }
-        public Tensor Backward(Tensor gradient)
+        public TensorBase Backward(TensorBase gradient)
         {
-            Tensor x = _project.Backward(gradient);
+            TensorBase x = _project.Backward(gradient);
             x = _activation.Backward(x);
             x = _expand.Backward(x);           
 

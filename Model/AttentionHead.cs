@@ -8,7 +8,7 @@ namespace SimpleTransformer.Model
         private readonly LinearLayer _queryProjection;
         private readonly LinearLayer _keyProjection;
         private readonly LinearLayer _valueProjection;
-        private Tensor? _cachedInputGradient;
+        private TensorBase? _cachedInputGradient;
         public LinearLayer QueryProjection => _queryProjection;
         public LinearLayer KeyProjection => _keyProjection;
         public LinearLayer ValueProjection => _valueProjection;        
@@ -28,8 +28,8 @@ namespace SimpleTransformer.Model
             _attention = new ScaledDotProductAttention(headSize);
         }
 
-        public Tensor Forward(Tensor input) => Forward(input, null);
-        public Tensor Forward(Tensor input, Tensor? mask = null)
+        public TensorBase Forward(TensorBase input) => Forward(input, null);
+        public TensorBase Forward(TensorBase input, TensorBase? mask = null)
         {
             return input.Rank switch
             {
@@ -39,33 +39,33 @@ namespace SimpleTransformer.Model
             };
         }
 
-        private Tensor ForwardSequence(Tensor input, Tensor? mask = null)
+        private TensorBase ForwardSequence(TensorBase input, TensorBase? mask = null)
         {
             if(input.Rank != 2) throw new ArgumentException("Input must be a matrix.");
             
-            Tensor q = _queryProjection.Forward(input);
+            TensorBase q = _queryProjection.Forward(input);
 
-            Tensor k = _keyProjection.Forward(input);
+            TensorBase k = _keyProjection.Forward(input);
 
-            Tensor v = _valueProjection.Forward(input);
+            TensorBase v = _valueProjection.Forward(input);
 
             return _attention.Forward(q, k, v, mask);
         }
 
-        private Tensor ForwardBatch(Tensor input, Tensor? mask = null)
+        private TensorBase ForwardBatch(TensorBase input, TensorBase? mask = null)
         {
             if (input.Rank != 3)
                 throw new ArgumentException("Input must be a stacked matrix.");
 
-            Tensor q = _queryProjection.Forward(input);
+            TensorBase q = _queryProjection.Forward(input);
 
-            Tensor k = _keyProjection.Forward(input);
+            TensorBase k = _keyProjection.Forward(input);
 
-            Tensor v = _valueProjection.Forward(input);
+            TensorBase v = _valueProjection.Forward(input);
 
             return _attention.Forward(q, k, v, mask);
         }
-        public Tensor Backward(Tensor gradient)
+        public TensorBase Backward(TensorBase gradient)
         {
             return gradient.Rank switch
             {
@@ -74,18 +74,18 @@ namespace SimpleTransformer.Model
                 _ => throw new ArgumentException("Gradient must be Rank 2 or 3.")
             };
         }
-        private Tensor BackwardSequence(Tensor gradient)
+        private TensorBase BackwardSequence(TensorBase gradient)
         {
             var (dQ, dK, dV) =
                 _attention.Backward(gradient);
 
-            Tensor dInputQ =
+            TensorBase dInputQ =
                 _queryProjection.Backward(dQ);
 
-            Tensor dInputK =
+            TensorBase dInputK =
                 _keyProjection.Backward(dK);
 
-            Tensor dInputV =
+            TensorBase dInputV =
                 _valueProjection.Backward(dV);
                 
             Debug.Assert(
@@ -115,7 +115,7 @@ namespace SimpleTransformer.Model
 
             return _cachedInputGradient;
         }
-        private Tensor BackwardBatch(Tensor gradient)
+        private TensorBase BackwardBatch(TensorBase gradient)
         {
             Log.Information("[AttentionHead.BackwardBatch] Started backpropagation...");
             if (gradient.Rank != 3)
@@ -124,13 +124,13 @@ namespace SimpleTransformer.Model
             var (dQ, dK, dV) =
                 _attention.Backward(gradient);
 
-            Tensor dInputQ =
+            TensorBase dInputQ =
                 _queryProjection.Backward(dQ);
 
-            Tensor dInputK =
+            TensorBase dInputK =
                 _keyProjection.Backward(dK);
 
-            Tensor dInputV =
+            TensorBase dInputV =
                 _valueProjection.Backward(dV);
 
             Debug.Assert(

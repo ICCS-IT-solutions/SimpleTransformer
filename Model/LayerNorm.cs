@@ -1,5 +1,6 @@
 using Serilog;
 using SimpleTransformer.Model.Extensions;
+using SimpleTransformer.Model.Extensions.Numerics;
 
 namespace SimpleTransformer.Model
 {
@@ -20,7 +21,7 @@ namespace SimpleTransformer.Model
         public IEnumerable<TrainableParameter> Parameters => _parameters;
         private readonly TrainableParameter[] _parameters;
         
-        private Tensor? _lastInput;        
+        private TensorBase? _lastInput;        
         public LayerNorm(int embeddingSize, float epsilon = 1e-5f)
         {
             _embeddingSize = embeddingSize;
@@ -45,7 +46,7 @@ namespace SimpleTransformer.Model
             TensorUtilities.Fill(_gradientGamma, 0.0f);
             TensorUtilities.Fill(_gradientBeta, 0.0f);
         }
-        public Tensor Forward(Tensor input)
+        public TensorBase Forward(TensorBase input)
         {
             return input.Rank switch
             {
@@ -54,7 +55,7 @@ namespace SimpleTransformer.Model
                 _ => throw new ArgumentException("LayerNorm expects Rank 2 or Rank 3.")
             };
         }
-        private Tensor ForwardSequence(Tensor input)
+        private TensorBase ForwardSequence(TensorBase input)
         {
             if(input.Rank != 2) throw new ArgumentException("LayerNorm expects a matrix.");
 
@@ -104,7 +105,7 @@ namespace SimpleTransformer.Model
             }
             return output;
         }
-        private Tensor ForwardBatch(Tensor input)
+        private TensorBase ForwardBatch(TensorBase input)
         {
             Tensor output =
                 new Tensor(
@@ -114,13 +115,13 @@ namespace SimpleTransformer.Model
 
             for (int layer = 0; layer < input.Layers; layer++)
             {
-                Tensor slice =
-                    TensorUtilities.GetLayer(input, layer);
+                TensorBase slice =
+                    TensorUtilitiesSimd.GetLayer(input, layer);
 
-                Tensor result =
+                TensorBase result =
                     ForwardSequence(slice);
 
-                TensorUtilities.SetLayer(
+                TensorUtilitiesSimd.SetLayer(
                     output,
                     layer,
                     result);
@@ -128,7 +129,7 @@ namespace SimpleTransformer.Model
 
             return output;
         }        
-        public Tensor Backward(Tensor gradient)
+        public TensorBase Backward(TensorBase gradient)
         {
             return gradient.Rank switch
             {
@@ -137,7 +138,7 @@ namespace SimpleTransformer.Model
                 _ => throw new ArgumentException("Linear layer expects rank 2 or rank 3.")
             };
         }
-        private Tensor BackwardSequence(Tensor gradient)
+        private TensorBase BackwardSequence(TensorBase gradient)
         {
             ZeroGradients();
 
@@ -163,7 +164,7 @@ namespace SimpleTransformer.Model
 
             return inputGradient;
         }
-        private Tensor BackwardBatch(Tensor gradient)
+        private TensorBase BackwardBatch(TensorBase gradient)
         {
             Log.Information("[LayerNorm.BackwardBatch] Started backpropagation...");
             Tensor output =
@@ -174,13 +175,13 @@ namespace SimpleTransformer.Model
 
             for (int layer = 0; layer < gradient.Layers; layer++)
             {
-                Tensor slice =
-                    TensorUtilities.GetLayer(gradient, layer);
+                TensorBase slice =
+                    TensorUtilitiesSimd.GetLayer(gradient, layer);
 
-                Tensor result =
+                TensorBase result =
                     BackwardSequence(slice);
 
-                TensorUtilities.SetLayer(
+                TensorUtilitiesSimd.SetLayer(
                     output,
                     layer,
                     result);
@@ -192,7 +193,7 @@ namespace SimpleTransformer.Model
         private (float sumDxHat, float sumDxHatXHat)
             ComputeDerivativeSums(
                 int row,
-                Tensor gradient)
+                TensorBase gradient)
         {
             float sumDxHat = 0f;
             float sumDxHatXHat = 0f;
@@ -216,7 +217,7 @@ namespace SimpleTransformer.Model
 
         private void AccumulateParameterGradients(
             int row,
-            Tensor gradient)
+            TensorBase gradient)
         {
             for (int col = 0; col < _embeddingSize; col++)
             {
@@ -230,10 +231,10 @@ namespace SimpleTransformer.Model
 
         private void ComputeInputGradient(
             int row,
-            Tensor gradient,
+            TensorBase gradient,
             float sumDxHat,
             float sumDxHatXHat,
-            Tensor inputGradient)
+            TensorBase inputGradient)
         {
             int numEmbeddings = _embeddingSize;
 
@@ -257,7 +258,7 @@ namespace SimpleTransformer.Model
             }
         }
 
-        private void ValidateBackwardState(Tensor gradient)
+        private void ValidateBackwardState(TensorBase gradient)
         {
             if (_lastInput == null ||
                 _lastInvStd == null ||
@@ -267,7 +268,7 @@ namespace SimpleTransformer.Model
                     "Forward must be called before Backward.");
             }
 
-            TensorUtilities.ValidateSameShape(
+            TensorUtilitiesSimd.ValidateSameShape(
                 gradient,
                 _lastInput);
         }

@@ -11,7 +11,23 @@
             "program": "${workspaceFolder}/bin/Debug/net9.0/SimpleTransformer.dll",
             "cwd": "${workspaceFolder}",
             "console": "externalTerminal",
-            "request": "launch"
+            "request": "launch",
+            "requireExactSource": false
+        },
+        {
+            "name": "Attach to process",
+            "type": "coreclr",
+            "request": "attach",
+            "processId": "${command:pickProcess}"
+        },
+        {
+            "name": "Launch AOT",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "preLaunchTask": "build-aot",
+            "program": "${workspaceFolder}/bin/Debug/net9.0/win-x64/publish/SimpleTransformer.exe",
+            "cwd": "${workspaceFolder}",
+            "console": "externalTerminal"
         }
     ]
 }

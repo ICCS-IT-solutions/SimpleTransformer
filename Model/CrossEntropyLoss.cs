@@ -1,11 +1,12 @@
 using SimpleTransformer.Model.Extensions;
+using SimpleTransformer.Model.Extensions.Numerics;
 
 namespace SimpleTransformer.Model
 {
     public class CrossEntropyLoss : ILossFunction
     {
         private const float Epsilon = 1e-8f;
-        public float Forward(Tensor prediction, Tensor target)
+        public float Forward(TensorBase prediction, TensorBase target)
         {
             return prediction.Rank switch
             {
@@ -16,7 +17,7 @@ namespace SimpleTransformer.Model
             };
         }
 
-        public Tensor Backward(Tensor prediction, Tensor target)
+        public TensorBase Backward(TensorBase prediction, TensorBase target)
         {
             return prediction.Rank switch
             {
@@ -26,19 +27,19 @@ namespace SimpleTransformer.Model
                     "Prediction must be rank 2 or rank 3.")
             };
         }
-        private float ForwardBatch(Tensor prediction, Tensor target)
+        private float ForwardBatch(TensorBase prediction, TensorBase target)
         {
-            TensorUtilities.ValidatePredictionAndTarget(prediction, target);
+            TensorUtilitiesSimd.ValidatePredictionAndTarget(prediction, target);
 
             float totalLoss = 0f;
 
             for (int batch = 0; batch < prediction.Layers; batch++)
             {
-                Tensor predictionSlice =
-                    TensorUtilities.GetLayer(prediction, batch);
+                TensorBase predictionSlice =
+                    TensorUtilitiesSimd.GetLayer(prediction, batch);
 
-                Tensor targetSlice =
-                    TensorUtilities.GetRow(target, batch);
+                TensorBase targetSlice =
+                    TensorUtilitiesSimd.GetRow(target, batch);
 
                 totalLoss +=
                     ForwardSequence(
@@ -48,10 +49,10 @@ namespace SimpleTransformer.Model
 
             return totalLoss / prediction.Layers;
         }
-        private float ForwardSequence(Tensor prediction, Tensor target)
+        private float ForwardSequence(TensorBase prediction, TensorBase target)
         { 
 
-            TensorUtilities.ValidatePredictionAndTarget(prediction, target);
+            TensorUtilitiesSimd.ValidatePredictionAndTarget(prediction, target);
             var totalLoss = 0f;
 
             for (int row = 0; row < prediction.Rows; row++)
@@ -70,13 +71,13 @@ namespace SimpleTransformer.Model
 
             return totalLoss / prediction.Rows;
         }
-        private Tensor BackwardBatch(
-            Tensor prediction,
-            Tensor target)
+        private TensorBase BackwardBatch(
+            TensorBase prediction,
+            TensorBase target)
         {
-            TensorUtilities.ValidatePredictionAndTarget(prediction, target);
+            TensorUtilitiesSimd.ValidatePredictionAndTarget(prediction, target);
 
-            Tensor gradient =
+            TensorBase gradient =
                 new Tensor(
                     prediction.Layers,
                     prediction.Rows,
@@ -84,33 +85,33 @@ namespace SimpleTransformer.Model
 
             for (int batch = 0; batch < prediction.Layers; batch++)
             {
-                Tensor predictionSlice =
-                    TensorUtilities.GetLayer(prediction, batch);
+                TensorBase predictionSlice =
+                    TensorUtilitiesSimd.GetLayer(prediction, batch);
 
-                Tensor targetSlice =
-                    TensorUtilities.GetRow(target, batch);
+                TensorBase targetSlice =
+                    TensorUtilitiesSimd.GetRow(target, batch);
 
-                Tensor gradSlice =
+                TensorBase gradSlice =
                     BackwardSequence(
                         predictionSlice,
                         targetSlice);
 
-                TensorUtilities.SetLayer(
+                TensorUtilitiesSimd.SetLayer(
                     gradient,
                     batch,
                     gradSlice);
             }
 
-            TensorMath.ScaleInPlace(
+            TensorMathSimd.ScaleInPlace(
                 gradient,
                 1f / prediction.Layers);
 
             return gradient;
         }
 
-        private Tensor BackwardSequence(Tensor prediction, Tensor target)
+        private TensorBase BackwardSequence(TensorBase prediction, TensorBase target)
         {
-            TensorUtilities.ValidatePredictionAndTarget(prediction, target);
+            TensorUtilitiesSimd.ValidatePredictionAndTarget(prediction, target);
 
             var gradient = prediction.Clone();
 
@@ -120,7 +121,7 @@ namespace SimpleTransformer.Model
                 gradient[row, tokenId] -= 1f;
             }   
 
-            TensorMath.ScaleInPlace(gradient, 1f / prediction.Rows);
+            TensorMathSimd.ScaleInPlace(gradient, 1f / prediction.Rows);
 
             return gradient;
         }

@@ -7,9 +7,9 @@ namespace SimpleTransformer.Model
 {
     public class ScaledDotProductAttention
     {
-        private readonly List<Tensor> _lastQ = new();
-        private readonly List<Tensor> _lastK = new();
-        private readonly List<Tensor> _lastV = new();
+        private readonly List<TensorBase> _lastQ = new();
+        private readonly List<TensorBase> _lastK = new();
+        private readonly List<TensorBase> _lastV = new();
         private readonly AttentionWorkspace _workspace;
         private readonly int _headSize;
         public ScaledDotProductAttention(int headSize)
@@ -17,9 +17,9 @@ namespace SimpleTransformer.Model
             _headSize = headSize;
             _workspace = new AttentionWorkspace();
         }
-        public Tensor Forward(Tensor input) => throw new NotImplementedException();
+        public TensorBase Forward(TensorBase input) => throw new NotImplementedException();
 
-        public Tensor Forward(Tensor q, Tensor k, Tensor v, Tensor? mask = null)
+        public TensorBase Forward(TensorBase q, TensorBase k, TensorBase v, TensorBase? mask = null)
         {
             return (q.Rank, k.Rank, v.Rank) switch
             {
@@ -28,7 +28,7 @@ namespace SimpleTransformer.Model
                 _ => throw new ArgumentException("Q, K and V must all be matrices."),
             };
         }
-        private Tensor ForwardSequence(Tensor q, Tensor k, Tensor v, Tensor? mask = null)
+        private TensorBase ForwardSequence(TensorBase q, TensorBase k, TensorBase v, TensorBase? mask = null)
         {
             if (q.Rank != 2 || k.Rank != 2 || v.Rank != 2)
                 throw new ArgumentException("Q, K and V must all be matrices.");
@@ -64,7 +64,7 @@ namespace SimpleTransformer.Model
                 _workspace.CachedScoresTransposed);
 
             //Scale scores in place by sqrt(headSize) and divide by sqrt(d) in place
-            TensorMath.ScaleInPlace(_workspace.CachedScoresTransposed, 1.0f / MathF.Sqrt(_headSize));
+            TensorMathSimd.ScaleInPlace(_workspace.CachedScoresTransposed, 1.0f / MathF.Sqrt(_headSize));
 
             if(mask != null)
             {
@@ -72,14 +72,14 @@ namespace SimpleTransformer.Model
                 {
                     throw new ArgumentException("Mask dimensions do not match attention scores.");
                 }
-                MaskUtilities.ApplyMaskInPlace(_workspace.CachedScoresTransposed, mask);
+                MaskUtilitiesSimd.ApplyMaskInPlace(_workspace.CachedScoresTransposed, mask);
             }
 
-            TensorUtilitiesSimd.SoftmaxRowsInPlace(_workspace.CachedScoresTransposed);
+            TensorUtilitiesSimd.SoftmaxRowsInPlace((Tensor)_workspace.CachedScoresTransposed);
 
             //Cache last weights after softmax without allocating new memory
             _workspace.LastWeights = EnsureSameShape(_workspace.LastWeights, _workspace.CachedScoresTransposed);
-            TensorUtilities.CopyTensor(_workspace.CachedScoresTransposed, _workspace.LastWeights);
+            TensorUtilitiesSimd.CopyTensor(_workspace.CachedScoresTransposed, _workspace.LastWeights);
 
             _workspace.CachedOutput = EnsureShape(
                 _workspace.CachedOutput,
@@ -93,16 +93,16 @@ namespace SimpleTransformer.Model
 
             return _workspace.CachedOutput;
         }
-        private Tensor ForwardBatch(
-            Tensor q,
-            Tensor k,
-            Tensor v,
-            Tensor? mask = null)
+        private TensorBase ForwardBatch(
+            TensorBase q,
+            TensorBase k,
+            TensorBase v,
+            TensorBase? mask = null)
         {
             _lastQ.Clear();
             _lastK.Clear();
             _lastV.Clear();
-            Tensor output =
+            TensorBase output =
                 new Tensor(
                     q.Layers,
                     q.Rows,
@@ -110,29 +110,29 @@ namespace SimpleTransformer.Model
 
             for (int b = 0; b < q.Layers; b++)
             {
-                Tensor qSlice =
-                    TensorUtilities.GetLayer(q, b);
+                TensorBase qSlice =
+                    TensorUtilitiesSimd.GetLayer(q, b);
 
-                Tensor kSlice =
-                    TensorUtilities.GetLayer(k, b);
+                TensorBase kSlice =
+                    TensorUtilitiesSimd.GetLayer(k, b);
 
-                Tensor vSlice =
-                    TensorUtilities.GetLayer(v, b);
+                TensorBase vSlice =
+                    TensorUtilitiesSimd.GetLayer(v, b);
 
-                Tensor? maskSlice = null;
+                TensorBase? maskSlice = null;
 
                 if (mask != null)
                     maskSlice =
-                        TensorUtilities.GetLayer(mask, b);
+                        TensorUtilitiesSimd.GetLayer(mask, b);
 
-                Tensor result =
+                TensorBase result =
                     ForwardSequence(
                         qSlice,
                         kSlice,
                         vSlice,
                         maskSlice);
 
-                TensorUtilities.SetLayer(
+                TensorUtilitiesSimd.SetLayer(
                     output,
                     b,
                     result);
@@ -140,7 +140,7 @@ namespace SimpleTransformer.Model
 
             return output;
         }
-        public (Tensor dQ, Tensor dK, Tensor dV) Backward(Tensor outputGradient)
+        public (TensorBase dQ, TensorBase dK, TensorBase dV) Backward(TensorBase outputGradient)
         {
             switch (outputGradient.Rank)
             {
@@ -160,7 +160,7 @@ namespace SimpleTransformer.Model
                     throw new ArgumentException("Q, K and V must all be matrices.");
             }
         }
-        private (Tensor dQ, Tensor dK, Tensor dV) BackwardSequence(Tensor outputGradient, Tensor? q = null, Tensor? k = null, Tensor? v = null)
+        private (TensorBase dQ, TensorBase dK, TensorBase dV) BackwardSequence(TensorBase outputGradient, TensorBase? q = null, TensorBase? k = null, TensorBase? v = null)
         {
             if (_lastQ == null ||
                 _lastK == null ||
@@ -214,11 +214,11 @@ namespace SimpleTransformer.Model
                 EnsureSameShape(_workspace.CachedDScores, _workspace.CachedDWeights);
 
             TensorUtilitiesSimd.SoftmaxBackwardInto(
-                _workspace.CachedDWeights,
-                _workspace.LastWeights,
-                _workspace.CachedDScores);
+                (Tensor)_workspace.CachedDWeights,
+                (Tensor)_workspace.LastWeights,
+                (Tensor)_workspace.CachedDScores);
 
-            TensorMath.ScaleInPlace(
+            TensorMathSimd.ScaleInPlace(
                 _workspace.CachedDScores,
                 1f / MathF.Sqrt(_headSize));
 
@@ -253,8 +253,8 @@ namespace SimpleTransformer.Model
             
             return (_workspace.CachedDQ, _workspace.CachedDK, _workspace.CachedDV);
         }
-        private (Tensor dQ, Tensor dK, Tensor dV)
-        BackwardBatch(Tensor outputGradient)
+        private (TensorBase dQ, TensorBase dK, TensorBase dV)
+        BackwardBatch(TensorBase outputGradient)
         {
             Log.Information("[ScaledDotProductAttention.BackwardBatch] Started backpropagation...");
             Tensor dQ =
@@ -277,8 +277,8 @@ namespace SimpleTransformer.Model
 
             for (int b = 0; b < outputGradient.Layers; b++)
             {
-                Tensor gradSlice =
-                    TensorUtilities.GetLayer(outputGradient, b);
+                TensorBase gradSlice =
+                    TensorUtilitiesSimd.GetLayer(outputGradient, b);
 
                 var (dq, dk, dv) =
                     BackwardSequence(
@@ -287,16 +287,16 @@ namespace SimpleTransformer.Model
                         _lastK[b],
                         _lastV[b]);
 
-                TensorUtilities.SetLayer(dQ, b, dq);
-                TensorUtilities.SetLayer(dK, b, dk);
-                TensorUtilities.SetLayer(dV, b, dv);
+                TensorUtilitiesSimd.SetLayer(dQ, b, dq);
+                TensorUtilitiesSimd.SetLayer(dK, b, dk);
+                TensorUtilitiesSimd.SetLayer(dV, b, dv);
             }
 
             return (dQ, dK, dV);
         }
-        private static Tensor EnsureTransposeBuffer(
-            Tensor? buffer,
-            Tensor source)
+        private static TensorBase EnsureTransposeBuffer(
+            TensorBase? buffer,
+            TensorBase source)
         {
             return EnsureShape(
                 buffer,
@@ -304,17 +304,17 @@ namespace SimpleTransformer.Model
                 source.Rows);
         }
 
-        private static Tensor EnsureSameShape(
-            Tensor? buffer,
-            Tensor source)
+        private static TensorBase EnsureSameShape(
+            TensorBase? buffer,
+            TensorBase source)
         {
             return EnsureShape(
                 buffer,
                 source.Rows,
                 source.Cols);
         }
-        private static Tensor EnsureShape(
-            Tensor? buffer,
+        private static TensorBase EnsureShape(
+            TensorBase? buffer,
             int rows,
             int cols)
         {
@@ -330,17 +330,17 @@ namespace SimpleTransformer.Model
     
         private sealed class AttentionWorkspace
         {
-            public Tensor CachedVTransposed = null!;
-            public Tensor CachedWeightsTransposed = null!;
-            public Tensor CachedScoresTransposed = null!;
-            public Tensor CachedDScores = null!;
-            public Tensor CachedDWeights = null!;
-            public Tensor CachedDQ = null!;
-            public Tensor CachedDV = null!;
-            public Tensor CachedDK = null!;
-            public Tensor LastWeights = null!;
-            public Tensor CachedOutput = null!;
-            public Tensor TransposedKeys = null!;
+            public TensorBase CachedVTransposed = null!;
+            public TensorBase CachedWeightsTransposed = null!;
+            public TensorBase CachedScoresTransposed = null!;
+            public TensorBase CachedDScores = null!;
+            public TensorBase CachedDWeights = null!;
+            public TensorBase CachedDQ = null!;
+            public TensorBase CachedDV = null!;
+            public TensorBase CachedDK = null!;
+            public TensorBase LastWeights = null!;
+            public TensorBase CachedOutput = null!;
+            public TensorBase TransposedKeys = null!;
         }
     }
 }

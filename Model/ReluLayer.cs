@@ -2,13 +2,13 @@ namespace SimpleTransformer.Model
 {
     public class ReluLayer : ILayer
     {
-        public Tensor Forward(Tensor input)
+        public TensorBase Forward(TensorBase input)
         {
             //Not yet ready to implement
             throw new NotImplementedException();
         }
 
-        public Tensor Backward(Tensor gradient)
+        public TensorBase Backward(TensorBase gradient)
         {
             //Not yet ready to implement
             throw new NotImplementedException();

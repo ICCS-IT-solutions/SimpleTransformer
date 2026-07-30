@@ -60,9 +60,9 @@ namespace SimpleTransformer.Model
             BuildModel();
             Log.Information("Transformer model ready to be loaded.");
         }
-        private (Tensor logits, Tensor hiddenState) Forward(Tensor input)
+        private (TensorBase logits, TensorBase hiddenState) Forward(TensorBase input)
         {
-            Tensor x = _embedding.Forward(input);
+            TensorBase x = _embedding.Forward(input);
 
             x = _position.Forward(x);
 
@@ -71,14 +71,14 @@ namespace SimpleTransformer.Model
                 x = layer.Forward(x);
             }
 
-            Tensor hiddenState = x;
+            TensorBase hiddenState = x;
 
-            Tensor logits = _outputProjection.Forward(hiddenState);
+            TensorBase logits = _outputProjection.Forward(hiddenState);
 
             return (logits, hiddenState);
         }
 
-        public void Backward(Tensor gradient)
+        public void Backward(TensorBase gradient)
         {
             gradient = _outputProjection.Backward(gradient);
 
@@ -91,11 +91,11 @@ namespace SimpleTransformer.Model
             gradient = _embedding.Backward(gradient);
         }
 
-        public (int[] tokens, Tensor logits, Tensor probabilities, Tensor hiddenState) Predict(Tensor input)
+        public (int[] tokens, TensorBase logits, TensorBase probabilities, TensorBase hiddenState) Predict(TensorBase input)
         {
             var (logits, hiddenState) = Forward(input);
 
-            var probabilities = TensorUtilitiesSimd.SoftmaxRows(logits);
+            var probabilities = TensorUtilitiesSimd.SoftmaxRows((Tensor)logits);
 
             return (TokenizationUtilities.ArgMax(probabilities), logits, probabilities, hiddenState);
         }
@@ -116,7 +116,7 @@ namespace SimpleTransformer.Model
         }
 
         public void Train(
-            IReadOnlyList<(Tensor Input, Tensor Target)> dataset)
+            IReadOnlyList<(TensorBase Input, TensorBase Target)> dataset)
         {
             for (int epoch = 0; epoch < Config.Epochs; epoch++)
             {
@@ -139,18 +139,18 @@ namespace SimpleTransformer.Model
 
 
         public float TrainStep(
-            Tensor inputs,
-            Tensor expectedOutputs)
+            TensorBase inputs,
+            TensorBase expectedOutputs)
         {
             ZeroGradients();
 
             //Only want the prediction/logits here for now, so we can ignore the hidden state.
-            (Tensor prediction, _) = Forward(inputs);
+            (TensorBase prediction, _) = Forward(inputs);
 
             float loss =
                 _loss.Forward(prediction, expectedOutputs);
 
-            Tensor gradient =
+            TensorBase gradient =
                 _loss.Backward(prediction, expectedOutputs);
 
             Backward(gradient);
@@ -160,12 +160,12 @@ namespace SimpleTransformer.Model
             return loss;
         }
 
-        public async Task<float> TrainStepAsync(Tensor inputs, Tensor expectedOutputs)
+        public async Task<float> TrainStepAsync(TensorBase inputs, TensorBase expectedOutputs)
         {
             return await Task.Run(() => TrainStep(inputs, expectedOutputs));
         }
 
-        public async Task<(Tensor logits, Tensor hiddenState)> ForwardAsync(Tensor input)
+        public async Task<(TensorBase logits, TensorBase hiddenState)> ForwardAsync(TensorBase input)
         {
             return await Task.Run(() => Forward(input));
         }

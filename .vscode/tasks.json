@@ -7,6 +7,22 @@
             "group": "build",
             "problemMatcher": [],
             "label": "build"
+        },
+        {
+            "label": "build-aot",
+            "type": "process",
+            "command": "dotnet",
+            "args": [
+                "publish",
+                "${workspaceFolder}",
+                "-c",
+                "Debug",
+                "-r",
+                "win-x64",
+                "/p:PublishAot=true"
+            ],
+            "problemMatcher": "$msCompile",
+            "group": "build"
         }
     ],
 }

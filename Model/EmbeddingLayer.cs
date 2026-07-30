@@ -1,4 +1,5 @@
 using SimpleTransformer.Model.Extensions;
+using SimpleTransformer.Model.Extensions.Numerics;
 
 namespace SimpleTransformer.Model
 {
@@ -10,7 +11,7 @@ namespace SimpleTransformer.Model
         private readonly Tensor _embeddingGradient;
         public IEnumerable<TrainableParameter> Parameters => _parameters;
         private readonly TrainableParameter[] _parameters;
-        private Tensor? _lastInput;
+        private TensorBase? _lastInput;
         private readonly Random _random = new();
         public EmbeddingLayer(int vocabSize, int embeddingSize)
         {
@@ -34,7 +35,7 @@ namespace SimpleTransformer.Model
                 _embeddings.Data[i] = (float)_random.NextDouble() * 2 * limit - limit;
             }
         }
-        public Tensor Forward(Tensor input)
+        public TensorBase Forward(TensorBase input)
         {
             if (input.Rank != 1 && input.Rank != 2)
                 throw new ArgumentException(
@@ -56,7 +57,7 @@ namespace SimpleTransformer.Model
                 sequenceLength = input.Cols;
             }
 
-            Tensor output =
+            TensorBase output =
                 input.Rank == 1
                     ? new Tensor(sequenceLength, _embeddingSize)
                     : new Tensor(batchSize, sequenceLength, _embeddingSize);
@@ -71,7 +72,7 @@ namespace SimpleTransformer.Model
                         throw new ArgumentException(
                             $"Token ID {tokenId} is outside of the vocabulary.");
 
-                    RowUtilities.CopyRowInPlace(
+                    TensorUtilitiesSimd.CopyRow(
                         _embeddings,
                         tokenId,
                         output,
@@ -90,7 +91,7 @@ namespace SimpleTransformer.Model
                             throw new ArgumentException(
                                 $"Token ID {tokenId} is outside of the vocabulary.");
 
-                        RowUtilities.CopyRowInPlace(
+                        TensorUtilitiesSimd.CopyRow(
                             _embeddings,
                             tokenId,
                             output,
@@ -103,7 +104,7 @@ namespace SimpleTransformer.Model
             return output;
         }
 
-        public Tensor Backward(Tensor gradient)
+        public TensorBase Backward(TensorBase gradient)
         {
             if (_lastInput == null)
                 throw new InvalidOperationException(
@@ -111,7 +112,7 @@ namespace SimpleTransformer.Model
 
             if (_lastInput.Rank == 1)
             {
-                TensorUtilities.ValidateTensorShape(
+                TensorUtilitiesSimd.ValidateTensorShape(
                     gradient,
                     _lastInput.Length,
                     _embeddingSize);
@@ -120,7 +121,7 @@ namespace SimpleTransformer.Model
                 {
                     int tokenId = (int)_lastInput[s];
 
-                    RowUtilities.AddRowInPlace(
+                    TensorUtilitiesSimd.AddRowInPlace(
                         gradient,
                         s,
                         _embeddingGradient,
@@ -130,7 +131,7 @@ namespace SimpleTransformer.Model
                 return new Tensor(_lastInput.Shape);
             }
 
-            TensorUtilities.ValidateTensorShape(
+            TensorUtilitiesSimd.ValidateTensorShape(
                 gradient,
                 _lastInput.Rows, 
                 _lastInput.Cols, 
@@ -142,7 +143,7 @@ namespace SimpleTransformer.Model
                 {
                     int tokenId = (int)_lastInput[b, s];
 
-                    RowUtilities.AddStackedRowInPlace(
+                    TensorUtilitiesSimd.AddStackedRowInPlace(
                         gradient,
                         b,
                         s,

@@ -1,12 +1,13 @@
 using SimpleTransformer.Model.Extensions;
+using SimpleTransformer.Model.Extensions.Numerics;
 
 namespace SimpleTransformer.Model
 {
     public class GeluLayer : ILayer
     {
-        private Tensor? _lastInput;
-        private Tensor? _cachedGradient;
-        public Tensor Forward(Tensor input)
+        private TensorBase? _lastInput;
+        private TensorBase? _cachedGradient;
+        public TensorBase Forward(TensorBase input)
         {
             return input.Rank switch
             {
@@ -16,7 +17,7 @@ namespace SimpleTransformer.Model
             };
         }
 
-        public Tensor Backward(Tensor gradient)
+        public TensorBase Backward(TensorBase gradient)
         {
             return gradient.Rank switch
             {
@@ -25,7 +26,7 @@ namespace SimpleTransformer.Model
                 _ => throw new ArgumentException("Gradient must be Rank 2 or Rank 3.")
             };
 }
-        private Tensor ForwardSequence(Tensor input)
+        private TensorBase ForwardSequence(TensorBase input)
         {
             //Validate input
             if (input.Rank != 2) throw new ArgumentException("Input must be a matrix.");
@@ -33,11 +34,11 @@ namespace SimpleTransformer.Model
             //Cache the input
             _lastInput = input;
 
-            return TensorMath.Gelu(input);
+            return TensorMathSimd.Gelu(input);
         }
-        private readonly List<Tensor> _lastInputs = new();
+        private readonly List<TensorBase> _lastInputs = new();
 
-        private Tensor ForwardBatch(Tensor input)
+        private TensorBase ForwardBatch(TensorBase input)
         {
             _lastInputs.Clear();
 
@@ -49,15 +50,15 @@ namespace SimpleTransformer.Model
 
             for (int layer = 0; layer < input.Layers; layer++)
             {
-                Tensor slice =
-                    TensorUtilities.GetLayer(input, layer);
+                TensorBase slice =
+                    TensorUtilitiesSimd.GetLayer(input, layer);
 
-                Tensor result =
+                TensorBase result =
                     ForwardSequence(slice);
 
                 _lastInputs.Add(slice);
 
-                TensorUtilities.SetLayer(
+                TensorUtilitiesSimd.SetLayer(
                     output,
                     layer,
                     result);
@@ -66,7 +67,7 @@ namespace SimpleTransformer.Model
             return output;
         }
 
-        private Tensor BackwardSequence(Tensor gradient)
+        private TensorBase BackwardSequence(TensorBase gradient)
         {
             if (_lastInput == null)
                 throw new InvalidOperationException(
@@ -82,14 +83,14 @@ namespace SimpleTransformer.Model
                     new Tensor(_lastInput.Rows, _lastInput.Cols);
             }
 
-            TensorMath.GeluBackwardInto(
+            TensorMathSimd.GeluBackwardInto(
                 _lastInput,
                 gradient,
                 _cachedGradient);
 
             return _cachedGradient;
         }
-        private Tensor BackwardBatch(Tensor gradient)
+        private TensorBase BackwardBatch(TensorBase gradient)
         {
             Tensor output =
                 new Tensor(
@@ -101,13 +102,13 @@ namespace SimpleTransformer.Model
             {
                 _lastInput = _lastInputs[layer];
 
-                Tensor gradSlice =
-                    TensorUtilities.GetLayer(gradient, layer);
+                TensorBase gradSlice =
+                    TensorUtilitiesSimd.GetLayer(gradient, layer);
 
-                Tensor result =
+                TensorBase result =
                     BackwardSequence(gradSlice);
 
-                TensorUtilities.SetLayer(
+                TensorUtilitiesSimd.SetLayer(
                     output,
                     layer,
                     result);

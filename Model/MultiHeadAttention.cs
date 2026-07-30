@@ -1,11 +1,12 @@
 using SimpleTransformer.Model.Extensions;
+using SimpleTransformer.Model.Extensions.Numerics;
 
 namespace SimpleTransformer.Model
 {
     public class MultiHeadAttention : ITrainableLayer
     {
         private readonly AttentionHead[] _heads;
-        private readonly Tensor[] _headGradientBuffers;
+        private readonly TensorBase[] _headGradientBuffers;
         private readonly LinearLayer _outputProjection;
         public IEnumerable<TrainableParameter> Parameters
         {
@@ -37,8 +38,8 @@ namespace SimpleTransformer.Model
 
             _outputProjection = new LinearLayer(embeddingSize, embeddingSize);
         }
-        public Tensor Forward(Tensor input) => Forward(input, null);
-        public Tensor Forward(Tensor input, Tensor? mask = null)
+        public TensorBase Forward(TensorBase input) => Forward(input, null);
+        public TensorBase Forward(TensorBase input, TensorBase? mask = null)
         {
             return input.Rank switch
             {
@@ -47,9 +48,9 @@ namespace SimpleTransformer.Model
                 _ => throw new ArgumentException("Input must be rank 2 or rank 3.")
             };
         }
-        private Tensor ForwardSequence(Tensor input, Tensor? mask = null)
+        private TensorBase ForwardSequence(TensorBase input, TensorBase? mask = null)
         {
-            var outputs = new List<Tensor>();
+            var outputs = new List<TensorBase>();
 
             //For each head, get the output from the .Forward method, concatenate them and return the concatenated output.
             foreach (var head in _heads)
@@ -57,12 +58,12 @@ namespace SimpleTransformer.Model
                 outputs.Add(head.Forward(input, mask));
             }
             //Concatenate the outputs
-            Tensor concatenated =
-                TensorUtilities.ConcatenateColumns(outputs);
+            TensorBase concatenated =
+                TensorUtilitiesSimd.ConcatenateColumns(outputs);
 
             return _outputProjection.Forward(concatenated);
         }
-        private Tensor ForwardBatch(Tensor input, Tensor? mask)
+        private TensorBase ForwardBatch(TensorBase input, TensorBase? mask)
         {
             Tensor output =
                 new Tensor(
@@ -72,19 +73,19 @@ namespace SimpleTransformer.Model
 
             for (int b = 0; b < input.Layers; b++)
             {
-                Tensor inputSlice =
-                    TensorUtilities.GetLayer(input, b);
+                TensorBase inputSlice =
+                    TensorUtilitiesSimd.GetLayer(input, b);
 
-                Tensor? maskSlice = null;
+                TensorBase? maskSlice = null;
 
                 if (mask != null)
                     maskSlice =
-                        TensorUtilities.GetLayer(mask, b);
+                        TensorUtilitiesSimd.GetLayer(mask, b);
 
-                Tensor result =
+                TensorBase result =
                     ForwardSequence(inputSlice, maskSlice);
 
-                TensorUtilities.SetLayer(
+                TensorUtilitiesSimd.SetLayer(
                     output,
                     b,
                     result);
@@ -102,7 +103,7 @@ namespace SimpleTransformer.Model
 
         // Not yet ready to implement the Backward() method in any of the layer classes. 
         // This can wait until I have the bulk of the code written and can start testing inferences against the untrained model just to see if it outputs anything.
-        public Tensor Backward(Tensor gradient)
+        public TensorBase Backward(TensorBase gradient)
         {
             return gradient.Rank switch
             {
@@ -111,9 +112,9 @@ namespace SimpleTransformer.Model
                 _ => throw new ArgumentException("Input must be rank 2 or rank 3.")
             };
         }
-        private Tensor BackwardSequence(Tensor gradient)
+        private TensorBase BackwardSequence(TensorBase gradient)
         {
-            Tensor dConcat =
+            TensorBase dConcat =
                 _outputProjection.Backward(gradient);
 
             int headSize = dConcat.Cols / _heads.Length;
@@ -124,32 +125,24 @@ namespace SimpleTransformer.Model
 
             for (int i = 0; i < headsLength; i++)
             {
-                if (_headGradientBuffers[i].Rows != dConcat.Rows)
-                {
-                    _headGradientBuffers[i] =
-                        new Tensor(dConcat.Rows, headSize);
-                }                
-                TensorUtilities.CopyColumnRangeInto(
-                    dConcat,
-                    _headGradientBuffers[i],
-                    i * headSize);
+                // 1. FIXED: Zero-allocation virtual slicing instead of a physical matrix copy step.
+                // Instead of copying column chunks into a buffer, we wrap the specific 
+                // column window of dConcat inside a high-speed strided view.
+                int startColumn = i * headSize;
+                TensorView headGradientView = new TensorView(dConcat, startColumn, dConcat.Rows, headSize, dConcat.Stride);
 
-                Tensor dInput =
-                    _heads[i].Backward(_headGradientBuffers[i]);
+                // 2. Pass the view directly into the head layer backward function
+                TensorBase dInput = _heads[i].Backward(headGradientView);
 
-                
-                //Cache the two data arrays locally
-                float [] inputGradientData = inputGradient.Data;
-                float [] dInputData = dInput.Data;
-
-                //Add the dInput data to the inputGradient
-                for (int j = 0; j < inputGradientData.Length; j++)
-                    inputGradientData[j] += dInputData[j];
-            }            
-            
+                // 3. FIXED & ACCELERATED: Stride-safe, zero-allocation gradient accumulation pass.
+                // Replaces your raw .Data array loops which break if dInput is a view slice.
+                // We use our pre-optimized ElementWiseAddInPlace method which honors offsets and strides perfectly.
+                TensorMathSimd.ElementWiseAddInPlace(inputGradient, dInput);
+            }           
+                        
             return inputGradient;
         }
-        private Tensor BackwardBatch(Tensor gradient)
+        private TensorBase BackwardBatch(TensorBase gradient)
         {
             Tensor output =
                 new Tensor(
@@ -159,13 +152,13 @@ namespace SimpleTransformer.Model
 
             for (int b = 0; b < gradient.Layers; b++)
             {
-                Tensor gradSlice =
-                    TensorUtilities.GetLayer(gradient, b);
+                TensorBase gradSlice =
+                    TensorUtilitiesSimd.GetLayer(gradient, b);
 
-                Tensor result =
+                TensorBase result =
                     BackwardSequence(gradSlice);
 
-                TensorUtilities.SetLayer(
+                TensorUtilitiesSimd.SetLayer(
                     output,
                     b,
                     result);

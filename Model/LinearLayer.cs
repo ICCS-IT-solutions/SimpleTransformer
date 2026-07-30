@@ -22,7 +22,7 @@ namespace SimpleTransformer.Model
         public Tensor Weights => _weights;
         public Tensor? Bias => _bias;
 
-        private Tensor? _lastInput;
+        private TensorBase? _lastInput;
         public LinearLayer(int inputSize, int outputSize, bool useBias = true)
         {
             _inputSize = inputSize;
@@ -68,7 +68,7 @@ namespace SimpleTransformer.Model
                 Array.Clear(_bias!.Data);
             }
         }
-        public Tensor Forward(Tensor input)
+        public TensorBase Forward(TensorBase input)
         {
             
             // Log.Information($"[LinearLayer.Forward{(input.Rank == 2 ? "Sequence" : "Batch")}] Started forward propagation...");
@@ -80,7 +80,7 @@ namespace SimpleTransformer.Model
             };
         }
 
-        private Tensor ForwardSequence(Tensor input)
+        private TensorBase ForwardSequence(TensorBase input)
         {
             // var watch = System.Diagnostics.Stopwatch.StartNew();
             if (input.Rank != 2)
@@ -97,12 +97,6 @@ namespace SimpleTransformer.Model
                 TensorUtilitiesSimd.CopyInto(_weights, _cachedWeights);
                 _transposeDirtyState = false;
             }
-            
-            // Log.Information($"_weights      : {_weights.Rows} x {_weights.Cols}");
-
-            // Log.Information($"_cachedWeights: {_cachedWeights.Rows} x {_cachedWeights.Cols}");
-
-            // Log.Information($"input         : {_lastInput.Rows} x {_lastInput.Cols}");
             var output =
                 TensorMathSimd.MatrixMultiplyRightTransposed(
                     _lastInput,
@@ -124,7 +118,7 @@ namespace SimpleTransformer.Model
             // Log.Information($"[LinearLayer.ForwardSequence] Finished forward propagation in {watch.ElapsedMilliseconds} ms.");
             return output;
         }
-        private Tensor ForwardBatch(Tensor input)
+        private TensorBase ForwardBatch(TensorBase input)
         {
             // var watch = System.Diagnostics.Stopwatch.StartNew();
             if (input.Rank != 3)
@@ -141,7 +135,7 @@ namespace SimpleTransformer.Model
                 _transposeDirtyState = false;
             }
 
-            Tensor output =
+            TensorBase output =
                 new Tensor(
                     input.Layers,
                     input.Rows,
@@ -149,15 +143,15 @@ namespace SimpleTransformer.Model
 
             for (int b = 0; b < input.Layers; b++)
             {
-                Tensor inputSlice =
-                    TensorUtilities.GetLayer(input, b);
+                TensorBase inputSlice =
+                    TensorUtilitiesSimd.GetLayer(input, b);
 
-                Tensor outputSlice =
+                TensorBase outputSlice =
                     TensorMathSimd.MatrixMultiplyRightTransposed(
                         inputSlice,
                         _cachedWeights);
 
-                TensorUtilities.SetLayer(
+                TensorUtilitiesSimd.SetLayer(
                     output,
                     b,
                     outputSlice);
@@ -182,7 +176,7 @@ namespace SimpleTransformer.Model
             return output;
         }        
 
-        public Tensor Backward(Tensor gradient)
+        public TensorBase Backward(TensorBase gradient)
         {
             return gradient.Rank switch
             {
@@ -191,12 +185,12 @@ namespace SimpleTransformer.Model
                 _ => throw new ArgumentException("Linear layer expects rank 2 or rank 3.")
             };
         }
-        private Tensor BackwardSequence(Tensor gradient)
+        private TensorBase BackwardSequence(TensorBase gradient)
         {
             if(_lastInput == null) throw new InvalidOperationException("Last input is null.");
 
             //Validate the gradient
-            TensorUtilities.ValidateTensorShape(
+            TensorUtilitiesSimd.ValidateTensorShape(
                 gradient,
                 _lastInput.Rows,
                 _outputSize);
@@ -215,9 +209,9 @@ namespace SimpleTransformer.Model
             //     _cachedGradient);
 
                
-            TensorMathSimd.MatrixMultiplyRightTransposedInto(
-                _cachedGradient,
-                input, _weightGradient);
+            TensorMathSimd.MatrixMultiplyLeftTransposedInto(
+                gradient, input,
+                _weightGradient);
 
             //If bias is used, compute the bias gradient
             if(_useBias)
@@ -238,15 +232,15 @@ namespace SimpleTransformer.Model
                 gradient,
                 _weights);
         }
-        private Tensor BackwardBatch(Tensor gradient)
+        private TensorBase BackwardBatch(TensorBase gradient)
         {
             Log.Information("[LinearLayer.BackwardBatch] Started backpropagation...");
             if (_lastInput == null)
                 throw new InvalidOperationException();
 
-            Tensor input = _lastInput;
+            TensorBase input = _lastInput;
 
-            Tensor inputGradient =
+            TensorBase inputGradient =
                 new Tensor(
                     gradient.Layers,
                     gradient.Rows,
@@ -254,16 +248,16 @@ namespace SimpleTransformer.Model
 
             for (int b = 0; b < gradient.Layers; b++)
             {
-                Tensor gradSlice =
-                    TensorUtilities.GetLayer(gradient, b);
+                TensorBase gradSlice =
+                    TensorUtilitiesSimd.GetLayer(gradient, b);
 
-                Tensor inputSlice =
-                    TensorUtilities.GetLayer(input, b);
+                TensorBase inputSlice =
+                    TensorUtilitiesSimd.GetLayer(input, b);
 
-                Tensor gradTranspose =
+                TensorBase gradTranspose =
                     TensorUtilitiesSimd.Transpose(gradSlice);
 
-                Tensor dW =
+                TensorBase dW =
                     TensorMathSimd.MatrixMultiply(
                         gradTranspose,
                         inputSlice);
@@ -272,12 +266,12 @@ namespace SimpleTransformer.Model
                     _weightGradient,
                     dW);
 
-                Tensor dInput =
+                TensorBase dInput =
                     TensorMathSimd.MatrixMultiply(
                         gradSlice,
                         _weights);
 
-                TensorUtilities.SetLayer(
+                TensorUtilitiesSimd.SetLayer(
                     inputGradient,
                     b,
                     dInput);

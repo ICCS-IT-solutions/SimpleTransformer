@@ -1,3 +1,5 @@
+using SimpleTransformer.Model.Extensions.Numerics;
+
 namespace SimpleTransformer.Model.Extensions
 {
     public static class StatsUtilities
@@ -52,24 +54,24 @@ namespace SimpleTransformer.Model.Extensions
             return sum / values.Length;
         }
 
-        public static float AverageRow(Tensor matrix, int row)
+        public static float AverageRow(TensorBase matrix, int row)
         {
             if (matrix.Rank != 2)
                 throw new ArgumentException("Input must be a matrix.");
 
-            return Average(RowUtilities.GetRow(matrix, row));
+            return Average(TensorUtilitiesSimd.GetRow(matrix, row).ReadOnlySpan);
         }
-        public static float MeanRow(Tensor matrix, int row)
+        public static float MeanRow(TensorBase matrix, int row)
         {
             return AverageRow(matrix, row);
         }
 
-        public static float MedianRow(Tensor matrix, int row) //This is the value in the middle of the sorted array, in this case a row.
+        public static float MedianRow(TensorBase matrix, int row) //This is the value in the middle of the sorted array, in this case a row.
         {
             if (matrix.Rank != 2) 
                 throw new ArgumentException("Input must be a matrix.");
 
-            return Median(RowUtilities.GetRow(matrix, row));
+            return Median(TensorUtilitiesSimd.GetRow(matrix, row).ReadOnlySpan);
         }
 
         public static float VarianceRow(Tensor matrix, int row, float avg)
@@ -78,9 +80,9 @@ namespace SimpleTransformer.Model.Extensions
         }
 
         //Get both average/mean and variance for a row
-        public static (float average, float variance) AverageAndVarianceRow(Tensor matrix, int row)
+        public static (float average, float variance) AverageAndVarianceRow(TensorBase matrix, int row)
         {
-            var values = RowUtilities.GetRow(matrix, row);
+            var values = TensorUtilitiesSimd.GetRow(matrix, row).ReadOnlySpan;
 
             float avg = Average(values);
             float var = Variance(values, avg);
@@ -88,7 +90,7 @@ namespace SimpleTransformer.Model.Extensions
             return (avg, var);
         }
 
-        public static (float average, float variance) MeanAndVarianceRow(Tensor matrix, int row) => AverageAndVarianceRow(matrix, row);
+        public static (float average, float variance) MeanAndVarianceRow(TensorBase matrix, int row) => AverageAndVarianceRow(matrix, row);
 
         #endregion
 

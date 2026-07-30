@@ -31,7 +31,7 @@ namespace SimpleTransformer.Api.Endpoints.Services
             var tensor = TokenizationUtilities.FromTokenIds(tokens);
 
             //Pass the tensor to the model
-            (int[] outputTokens, Tensor logits, Tensor probabilities, Tensor hiddenState) = _model.Predict(tensor);
+            (int[] outputTokens, TensorBase logits, TensorBase probabilities, TensorBase hiddenState) = _model.Predict(tensor);
 
             //Convert the tensor to token ids
             // var tokenIds = TokenizationUtilities.ToTokenIds(prediction);
@@ -81,7 +81,7 @@ namespace SimpleTransformer.Api.Endpoints.Services
 
             
         }
-        private string DumpFirstRowLogits(Tensor logits)
+        private string DumpFirstRowLogits(TensorBase logits)
         {
             //Logits is a matrix, so for each column, construct a string from the first row
             var sb = new StringBuilder();
@@ -93,7 +93,7 @@ namespace SimpleTransformer.Api.Endpoints.Services
             return sb.ToString();
         }
 
-        private string DumpArgMax(Tensor probabilities)
+        private string DumpArgMax(TensorBase probabilities)
         {
             var sb = new StringBuilder();
 
@@ -119,7 +119,7 @@ namespace SimpleTransformer.Api.Endpoints.Services
 
             return sb.ToString();
         }
-        private string DumpRows(Tensor logits, int columns = 10)
+        private string DumpRows(TensorBase logits, int columns = 10)
         {
             var sb = new StringBuilder();
 
@@ -138,7 +138,7 @@ namespace SimpleTransformer.Api.Endpoints.Services
             return sb.ToString();
         }
         //Dump the hidden state of the model
-        private string DumpHiddenState(Tensor hiddenState)
+        private string DumpHiddenState(TensorBase hiddenState)
         {
             var sb = new StringBuilder();
 

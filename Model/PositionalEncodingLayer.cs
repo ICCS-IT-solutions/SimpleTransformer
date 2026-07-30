@@ -1,4 +1,5 @@
 using SimpleTransformer.Model.Extensions;
+using SimpleTransformer.Model.Extensions.Numerics;
 
 namespace SimpleTransformer.Model
 {
@@ -7,8 +8,8 @@ namespace SimpleTransformer.Model
         private readonly int _embeddingSize;
         private readonly int _maxSequenceLength;
 
-        private Tensor? _lastInput;    
-        private readonly Tensor _encoding;
+        private TensorBase? _lastInput;    
+        private readonly TensorBase _encoding;
         public PositionalEncodingLayer(int embeddingSize, int maxSequenceLength)
         {
             _embeddingSize = embeddingSize;
@@ -16,7 +17,7 @@ namespace SimpleTransformer.Model
 
             _encoding = PositionalEncodingUtilities.BuildEncoding(maxSequenceLength, embeddingSize);
         }
-        public Tensor Forward(Tensor input)
+        public TensorBase Forward(TensorBase input)
         {
             return input.Rank switch
             {
@@ -26,7 +27,7 @@ namespace SimpleTransformer.Model
                     "Expected a rank 2 or rank 3 tensor.")
             };
         }
-        private Tensor ForwardSequence(Tensor input)
+        private TensorBase ForwardSequence(TensorBase input)
         {
             if (input.Cols != _embeddingSize)
                 throw new ArgumentException("Incorrect embedding size.");
@@ -36,15 +37,15 @@ namespace SimpleTransformer.Model
 
             _lastInput = input;
 
-            Tensor output = input.Clone();
+            TensorBase output = input.Clone();
 
-            PositionalEncodingUtilities.AddEncodingInPlace(
+            PositionalEncodingUtilitiesSimd.AddEncodingInPlace(
                 output,
                 _encoding);
 
             return output;
         }        
-        private Tensor ForwardBatch(Tensor input)
+        private TensorBase ForwardBatch(TensorBase input)
         {
             if (input.Shape[2] != _embeddingSize)
                 throw new ArgumentException("Incorrect embedding size.");
@@ -54,15 +55,15 @@ namespace SimpleTransformer.Model
 
             _lastInput = input;
 
-            Tensor output = input.Clone();
+            TensorBase output = input.Clone();
 
-            PositionalEncodingUtilities.AddEncodingInPlace(
+            PositionalEncodingUtilitiesSimd.AddEncodingInPlace(
                 output,
                 _encoding);
 
             return output;
         }
-        public Tensor Backward(Tensor gradient)
+        public TensorBase Backward(TensorBase gradient)
         {
             if (gradient.Rank != 2 &&
                 gradient.Rank != 3)

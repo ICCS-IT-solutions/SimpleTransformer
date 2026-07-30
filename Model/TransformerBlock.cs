@@ -1,16 +1,17 @@
 using System.Diagnostics;
 using Serilog;
 using SimpleTransformer.Model.Extensions;
+using SimpleTransformer.Model.Extensions.Numerics;
 
 namespace SimpleTransformer.Model
 {
     public class TransformerBlock : ITrainableLayer
     {
-        private Tensor? _lastAttentionOutput;
-        private Tensor? _lastNorm1Output;
-        private Tensor? _lastFeedForwardOutput;
-        private Tensor? _lastResidual1;
-        private Tensor? _lastResidual2;
+        private TensorBase? _lastAttentionOutput;
+        private TensorBase? _lastNorm1Output;
+        private TensorBase? _lastFeedForwardOutput;
+        private TensorBase? _lastResidual1;
+        private TensorBase? _lastResidual2;
 
         private readonly ITrainableLayer _multiHeadAttention;
         private readonly ITrainableLayer _feedForward;
@@ -42,7 +43,7 @@ namespace SimpleTransformer.Model
             _layerNorm2 = layerNorm2;
         }
 
-        public Tensor Forward(Tensor input)
+        public TensorBase Forward(TensorBase input)
         {
             return input.Rank switch
             {
@@ -51,30 +52,30 @@ namespace SimpleTransformer.Model
                 _ => throw new ArgumentException("Input must be rank 2 or rank 3.")
             };
         }
-        private Tensor ForwardSequence(Tensor input)
+        private TensorBase ForwardSequence(TensorBase input)
         {
             //Validate input
             if (input.Rank != 2) throw new ArgumentException("Input must be a matrix.");
 
             //Multi-head attention
-            Tensor residual1 = input.Clone();
+            TensorBase residual1 = input.Clone();
 
-            Tensor attention = _multiHeadAttention.Forward(input);
+            TensorBase attention = _multiHeadAttention.Forward(input);
             if (attention.Rows != residual1.Rows || attention.Cols != residual1.Cols)
             {
                 throw new InvalidOperationException("Attention output shape mismatch.");
             }
 
-            TensorMath.ElementWiseAddInPlace(attention, residual1);
+            TensorMathSimd.ElementWiseAddInPlace(attention, residual1);
 
-            Tensor norm1 = _layerNorm1.Forward(attention);
+            TensorBase norm1 = _layerNorm1.Forward(attention);
 
             //Feed forward
-            Tensor residual2 = norm1.Clone();
+            TensorBase residual2 = norm1.Clone();
 
-            Tensor ff = _feedForward.Forward(norm1);
+            TensorBase ff = _feedForward.Forward(norm1);
 
-            TensorMath.ElementWiseAddInPlace(ff, residual2);
+            TensorMathSimd.ElementWiseAddInPlace(ff, residual2);
 
             //Set up the cache
             _lastAttentionOutput = attention;
@@ -86,32 +87,32 @@ namespace SimpleTransformer.Model
             return _layerNorm2.Forward(ff);
 
         }
-        private Tensor ForwardBatch(Tensor input)
+        private TensorBase ForwardBatch(TensorBase input)
         {
             var batchWatch = Stopwatch.StartNew();
             var stepWatch = Stopwatch.StartNew();
             Log.Information("[TransformerBlock.ForwardBatch] Started forward propagation...");
-            Tensor residual1 = input.Clone();
+            TensorBase residual1 = input.Clone();
             
-            Tensor attention = _multiHeadAttention.Forward(input);
+            TensorBase attention = _multiHeadAttention.Forward(input);
             Log.Information("[TransformerBlock.ForwardBatch] Finished multi-head attention in {ElapsedMilliseconds} ms.", stepWatch.ElapsedMilliseconds);
             stepWatch.Restart();
 
-            TensorMath.ElementWiseAddInPlace(attention, residual1);
+            TensorMathSimd.ElementWiseAddInPlace(attention, residual1);
             Log.Information("[TransformerBlock.ForwardBatch] Finished residual addition in {ElapsedMilliseconds} ms.", stepWatch.ElapsedMilliseconds);
             stepWatch.Restart();
 
-            Tensor norm1 = _layerNorm1.Forward(attention);
+            TensorBase norm1 = _layerNorm1.Forward(attention);
             Log.Information("[TransformerBlock.ForwardBatch] Finished layer norm in {ElapsedMilliseconds} ms.", stepWatch.ElapsedMilliseconds);
             stepWatch.Restart();
 
-            Tensor residual2 = norm1.Clone();
+            TensorBase residual2 = norm1.Clone();
 
-            Tensor ff = _feedForward.Forward(norm1);
+            TensorBase ff = _feedForward.Forward(norm1);
             Log.Information("[TransformerBlock.ForwardBatch] Finished feed forward in {ElapsedMilliseconds} ms.", stepWatch.ElapsedMilliseconds);
             stepWatch.Restart();
 
-            TensorMath.ElementWiseAddInPlace(ff, residual2);
+            TensorMathSimd.ElementWiseAddInPlace(ff, residual2);
             Log.Information("[TransformerBlock.ForwardBatch] Finished residual addition in {ElapsedMilliseconds} ms.", stepWatch.ElapsedMilliseconds);
             stepWatch.Restart();
 
@@ -126,7 +127,7 @@ namespace SimpleTransformer.Model
             Log.Information("[TransformerBlock.ForwardBatch] Finished forward propagation in {ElapsedMilliseconds} ms.", batchWatch.ElapsedMilliseconds);
             return _layerNorm2.Forward(ff);
         }
-        public Tensor Backward(Tensor gradient)
+        public TensorBase Backward(TensorBase gradient)
         {
             return gradient.Rank switch
             {
@@ -135,54 +136,64 @@ namespace SimpleTransformer.Model
                 _ => throw new ArgumentException("Input must be rank 2 or rank 3.")
             };
         }
-        private Tensor BackwardSequence(Tensor gradient)
+        private TensorBase BackwardSequence(TensorBase gradient)
         {
-            Tensor dResidual2 = _layerNorm2.Backward(gradient);
+            var batchWatch = Stopwatch.StartNew();
+            var opWatch = Stopwatch.StartNew();
+            Log.Information("[TransformerBlock.BackwardSequence] Started backpropagation...");
+            TensorBase dResidual2 = _layerNorm2.Backward(gradient);
 
-            Tensor dFf = _feedForward.Backward(dResidual2);
+            TensorBase dFf = _feedForward.Backward(dResidual2);
 
-            Tensor dNorm1 = new Tensor(dFf.Rows, dFf.Cols);
+            TensorBase dNorm1 = new Tensor(dFf.Rows, dFf.Cols);
 
-            TensorMath.ElementWiseAddInto(dFf, dResidual2, dNorm1);
+            TensorMathSimd.ElementWiseAddInto(dFf, dResidual2, dNorm1);
 
-            Tensor dResidual1 = _layerNorm1.Backward(dNorm1);
+            TensorBase dResidual1 = _layerNorm1.Backward(dNorm1);
 
-            Tensor dAttention = _multiHeadAttention.Backward(dResidual1);
+            TensorBase dAttention = _multiHeadAttention.Backward(dResidual1);
 
-            Tensor dInput = new Tensor(dAttention.Rows, dAttention.Cols);
+            TensorBase dInput = new Tensor(dAttention.Rows, dAttention.Cols);
 
-            TensorMath.ElementWiseAddInto(dAttention, dResidual1, dInput);
+            TensorMathSimd.ElementWiseAddInto(dAttention, dResidual1, dInput);
 
+            batchWatch.Stop();
+            opWatch.Stop();
+            Log.Information($"[TransformerBlock.BackwardSequence] Finished backpropagation in {batchWatch.ElapsedMilliseconds} ms.");
             return dInput;
         }
-        private Tensor BackwardBatch(Tensor gradient)
+        private TensorBase BackwardBatch(TensorBase gradient)
         {
+            var batchWatch = Stopwatch.StartNew();
+            var opWatch = Stopwatch.StartNew();
             Log.Information("[TransformerBlock.BackwardBatch] Started backpropagation...");
             if (gradient.Rank != 3)
                 throw new ArgumentException("Gradient must be a stacked matrix.");
 
-            Tensor dResidual2 = _layerNorm2.Backward(gradient);
+            TensorBase dResidual2 = _layerNorm2.Backward(gradient);
 
-            Tensor dFf = _feedForward.Backward(dResidual2);
+            TensorBase dFf = _feedForward.Backward(dResidual2);
 
-            Tensor dNorm1 = new Tensor(
+            TensorBase dNorm1 = new Tensor(
                 dFf.Layers,
                 dFf.Rows,
                 dFf.Cols);
 
-            TensorMath.ElementWiseAddInto(dFf, dResidual2, dNorm1);
+            TensorMathSimd.ElementWiseAddInto(dFf, dResidual2, dNorm1);
 
-            Tensor dResidual1 = _layerNorm1.Backward(dNorm1);
+            TensorBase dResidual1 = _layerNorm1.Backward(dNorm1);
 
-            Tensor dAttention = _multiHeadAttention.Backward(dResidual1);
+            TensorBase dAttention = _multiHeadAttention.Backward(dResidual1);
 
-            Tensor dInput = new Tensor(
+            TensorBase dInput = new Tensor(
                 dAttention.Layers,
                 dAttention.Rows,
                 dAttention.Cols);
 
-            TensorMath.ElementWiseAddInto(dAttention, dResidual1, dInput);
+            TensorMathSimd.ElementWiseAddInto(dAttention, dResidual1, dInput);
 
+            batchWatch.Stop();
+            Log.Information($"[TransformerBlock.BackwardBatch] Finished backpropagation in {batchWatch.ElapsedMilliseconds} ms.");
             return dInput;
         }
 

@@ -9,6 +9,8 @@ namespace SimpleTransformer.Model
         public abstract int Layers { get; }
         public abstract int Rows { get; }
         public abstract int Cols { get; }
+        public abstract int Stride { get; }
+        public bool IsContiguous => Stride == Cols;
         public abstract int[] Shape { get; }
         public abstract float[] Data { get; }
         public abstract float[] Buffer { get; }
@@ -16,5 +18,6 @@ namespace SimpleTransformer.Model
         public abstract int Length { get; }
         public Span<float> Span => Buffer.AsSpan(Offset, Length);
         public ReadOnlySpan<float> ReadOnlySpan => Buffer.AsSpan(Offset, Length);
+        public abstract TensorBase Clone();
     }    
 }
