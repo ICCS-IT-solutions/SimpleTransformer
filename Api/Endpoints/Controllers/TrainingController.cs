@@ -27,7 +27,7 @@ namespace SimpleTransformer.Api.Endpoints.Controllers
         [HttpPost("api/v1/train/file")]
         public async Task<ApiResponse<TrainingResponse>> Train([FromBody] TrainingFileRequest req)
         {
-            return await _trainingService.TrainModelFromTextFile(req.TextFile);
+            return await _trainingService.TrainModelFromTextFile(req);
         }
     }
 }

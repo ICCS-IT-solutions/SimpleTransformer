@@ -86,28 +86,6 @@ namespace SimpleTransformer.Model.Extensions.Numerics
             }
         }
 
-        // public static void ElementWiseAddInPlace(TensorBase a, TensorBase b)
-        // {
-        //     ValidateSameShape(a, b);
-
-        //     Span<float> aData = a.Data;
-        //     ReadOnlySpan<float> bData = b.Data;
-
-        //     int width = Vector<float>.Count;
-
-        //     int i = 0;
-
-        //     for (; i <= aData.Length - width; i += width)
-        //     {
-        //         Vector<float> va = new(aData.Slice(i));
-        //         Vector<float> vb = new(bData.Slice(i));
-
-        //         (va + vb).CopyTo(aData.Slice(i));
-        //     }
-
-        //     for (; i < aData.Length; i++)
-        //         aData[i] += bData[i];
-        // }
 
         public static Tensor ElementWiseAdd(TensorBase a, TensorBase b)
         {
@@ -169,90 +147,54 @@ namespace SimpleTransformer.Model.Extensions.Numerics
         //No transposes
         public static Tensor MatrixMultiply(TensorBase a, TensorBase b)
         {
-            var result = new Tensor(a.Rows, b.Cols);
-            MatrixMultiplyRowByRow(a, b, result);
+            Tensor result = new Tensor(a.Rows, b.Cols);
+            MatrixMultiplyRowByRow(a, b, result, transposeA: false, transposeB: false);
             return result;
         }
-        //Right is transposed
-        public static Tensor MatrixMultiplyRightTransposed(
-            TensorBase a,
-            TensorBase b)
+        // Right Transposed: A * B^T
+        public static Tensor MatrixMultiplyRightTransposed(TensorBase a, TensorBase b)
         {
-            Tensor bt = TensorUtilitiesSimd.Transpose(b);
-
-            Tensor result = new Tensor(
-                a.Rows,
-                bt.Cols);
-
-            MatrixMultiplyRowByRow(
-                a,
-                bt,
-                result);
-
+            // Logical result dimensions for A (m x k) * B^T (k x n) => (m x n)
+            // B has physical shape (n x k), so B^T logical cols = B.Rows
+            Tensor result = new Tensor(a.Rows, b.Rows);
+            MatrixMultiplyRowByRow(a, b, result, transposeA: false, transposeB: true);
             return result;
         }
 
-        //Left is transposed
-        public static Tensor MatrixMultiplyLeftTransposed(
-            TensorBase a,
-            TensorBase b)
+        // Left Transposed: A^T * B
+        public static Tensor MatrixMultiplyLeftTransposed(TensorBase a, TensorBase b)
         {
-            Tensor at = TensorUtilitiesSimd.Transpose(a);
-
-            Tensor result = new Tensor(
-                at.Rows,
-                b.Cols);
-
-            MatrixMultiplyRowByRow(
-                at,
-                b,
-                result);
-
+            // Logical result dimensions for A^T (m x k) * B (k x n) => (m x n)
+            // A has physical shape (k x m), so A^T logical rows = A.Cols
+            Tensor result = new Tensor(a.Cols, b.Cols);
+            MatrixMultiplyRowByRow(a, b, result, transposeA: true, transposeB: false);
             return result;
         }
-
-        //No transposes but multiplies the two operands and stores the result in the third
-        public static void MatrixMultiplyInto(TensorBase a, TensorBase b, TensorBase result) => MatrixMultiplyRowByRow(a, b, result);
-        //Right is transposed, multiplies the two operands and stores the result in the third
-        public static void MatrixMultiplyRightTransposedInto(
-            TensorBase a,
-            TensorBase b,
-            TensorBase result)
+        // Both Transposed: A^T * B^T
+        public static Tensor MatrixMultiplyBothTransposed(TensorBase a, TensorBase b)
         {
-            Tensor bt = TensorUtilitiesSimd.Transpose(b);
+            Tensor result = new Tensor(a.Cols, b.Rows);
+            MatrixMultiplyRowByRow(a, b, result, transposeA: true, transposeB: true);
+            return result;
+        }        
 
-            var newResult = new Tensor(
-                a.Rows,
-                bt.Cols);
+        // No transposes -> stores into result
+        public static void MatrixMultiplyInto(TensorBase a, TensorBase b, TensorBase result) 
+            => MatrixMultiplyRowByRow(a, b, result, transposeA: false, transposeB: false);
 
-            result = newResult;
+        // Right transposed -> stores into result
+        public static void MatrixMultiplyRightTransposedInto(TensorBase a, TensorBase b, TensorBase result) 
+            => MatrixMultiplyRowByRow(a, b, result, transposeA: false, transposeB: true);
 
-            MatrixMultiplyRowByRow(
-                a,
-                bt,
-                result);
-        }
-        //Left is transposed, multiplies the two operands and stores the result in the third
-        public static void MatrixMultiplyLeftTransposedInto(
-            TensorBase a,
-            TensorBase b,
-            TensorBase result)
-        {
-            Tensor at = TensorUtilitiesSimd.Transpose(a);
+        // Left transposed -> stores into result
+        public static void MatrixMultiplyLeftTransposedInto(TensorBase a, TensorBase b, TensorBase result) 
+            => MatrixMultiplyRowByRow(a, b, result, transposeA: true, transposeB: false);
 
-            var newResult = new Tensor(
-                at.Rows,
-                b.Cols);
-                
-            result = newResult;
+        // Both transposed -> stores into result
+        public static void MatrixMultiplyBothTransposedInto(TensorBase a, TensorBase b, TensorBase result) 
+            => MatrixMultiplyRowByRow(a, b, result, transposeA: true, transposeB: true);
 
-            MatrixMultiplyRowByRow(
-                at,
-                b,
-                result);
-        }
-
-        private static void MatrixMultiplyRowByRow(
+       private static void MatrixMultiplyRowByRow(
             TensorBase a, TensorBase b, TensorBase result, 
             bool transposeA = false, bool transposeB = false)
         {
@@ -276,8 +218,7 @@ namespace SimpleTransformer.Model.Extensions.Numerics
             int n = bCols;
             int k = aCols;
 
-            // 3. FIX: Capture the raw arrays and offsets to bypass lambda capture restrictions.
-            // Standard heap arrays can be safely passed into Parallel.For.
+            // 3. Extract raw backing buffers & offsets once
             float[] arrayA = a.Buffer;
             int offsetA = a.Offset;
 
@@ -290,146 +231,67 @@ namespace SimpleTransformer.Model.Extensions.Numerics
             int aColsPhysical = a.Cols;
             int bColsPhysical = b.Cols;
 
-            // 4. Parallelise over the output rows
+            // 4. Parallelize over logical output rows
             Parallel.For(0, m, i =>
             {
-                // 5. Re-create the localized Spans safely inside each independent thread stack
                 ReadOnlySpan<float> spanA = arrayA.AsSpan(offsetA);
                 ReadOnlySpan<float> spanB = arrayB.AsSpan(offsetB);
-                Span<float> spanResult = arrayResult.AsSpan(offsetResult);
+                Span<float> spanResult = arrayResult.AsSpan(offsetResult, m * n);
 
-                // Thread-safe scratchpad on the CPU execution stack
+                int resultRowOffset = i * n;
                 Span<float> colBBuffer = stackalloc float[k];
 
-                int aRowOffset = transposeA ? i : i * k;
-                int aStride = transposeA ? aColsPhysical : 1;
-
-                // If A is not transposed, its row is contiguous in memory. Grab it once here.
-                ReadOnlySpan<float> contiguousRowA = !transposeA ? spanA.Slice(i * k, k) : default;
-
-                for (int j = 0; j < n; j++)
+                if (!transposeA)
                 {
-                    float dotProductResult = 0f;
-
-                    if (!transposeA && transposeB)
+                    // Direct slice from spanA - no stackalloc required for A
+                    ReadOnlySpan<float> rowA = spanA.Slice(i * k, k);
+                    ComputeRow(rowA, spanB, spanResult, resultRowOffset, colBBuffer, n, k, bColsPhysical, transposeB);
+                }
+                else
+                {
+                    // Gather column 'i' of matrix A into contiguous stack memory
+                    Span<float> rowABuffer = stackalloc float[k];
+                    for (int e = 0; e < k; e++)
                     {
-                        // CASE 1: Both rows are perfectly sequential in memory
-                        ReadOnlySpan<float> rowA = contiguousRowA;
-                        ReadOnlySpan<float> rowB = spanB.Slice(j * k, k);
-                        dotProductResult = DotSimd(rowA, rowB);
+                        rowABuffer[e] = spanA[e * aColsPhysical + i];
                     }
-                    else if (!transposeA && !transposeB)
+
+                    ComputeRow(rowABuffer, spanB, spanResult, resultRowOffset, colBBuffer, n, k, bColsPhysical, transposeB);
+                }
+            });
+
+            // Inlined execution logic shared by both transposeA branches
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            static void ComputeRow(
+                ReadOnlySpan<float> rowA, 
+                ReadOnlySpan<float> spanB, 
+                Span<float> spanResult, 
+                int resultRowOffset, 
+                Span<float> colBBuffer, 
+                int n, int k, int bColsPhysical, 
+                bool transposeB)
+            {
+                if (transposeB)
+                {
+                    for (int j = 0; j < n; j++)
                     {
-                        // CASE 2: Row A is contiguous, Column B must be gathered vertically into sequential memory
-                        ReadOnlySpan<float> rowA = contiguousRowA;
-                        
-                        // Extract column elements into our contiguous stack memory
+                        ReadOnlySpan<float> rowB = spanB.Slice(j * k, k);
+                        spanResult[resultRowOffset + j] = DotSimd(rowA, rowB);
+                    }
+                }
+                else
+                {
+                    for (int j = 0; j < n; j++)
+                    {
                         for (int e = 0; e < k; e++)
                         {
                             colBBuffer[e] = spanB[e * bColsPhysical + j];
                         }
-                        
-                        dotProductResult = DotSimd(rowA, colBBuffer);
+                        spanResult[resultRowOffset + j] = DotSimd(rowA, colBBuffer);
                     }
-                    else
-                    {
-                        // CASE 3: Fallback handling for TransposeA variations with zero heap allocations
-                        int bRowOffset = transposeB ? j * k : j;
-                        int bStride = transposeB ? 1 : bColsPhysical;
-
-                        for (int e = 0; e < k; e++)
-                        {
-                            float valA = spanA[aRowOffset + e * aStride];
-                            float valB = spanB[bRowOffset + e * bStride];
-                            dotProductResult += valA * valB;
-                        }
-                    }
-
-                    // Write output straight into your underlying tensor memory layout
-                    spanResult[i * n + j] = dotProductResult;
-                }
-            });
-        }
-
-        //Old version
-        /*
-        //Does not perform transposing unless either of the provided booleans are explicitly set by their wrappers.
-        private static void MatrixMultiplyRowByRow(
-            TensorBase a, TensorBase b, TensorBase result, 
-            bool transposeA = false, bool transposeB = false)
-        {
-            //First handle any transposes
-            if(transposeA)
-            {
-                Log.Information($"Before transpose: A rows: {a.Rows}, A columns: {a.Cols}");
-                Log.Information("Transpose A set to true. Transposing.");
-                a = TensorUtilitiesSimd.Transpose(a);
-                Log.Information($"After transpose: A rows: {a.Rows}, A columns: {a.Cols}");
-            }
-            if (transposeB)
-            {
-                Log.Information($"Before transpose: B rows: {b.Rows}, B columns: {b.Cols}");
-                Log.Information("Transpose B set to true. Transposing.");
-                b = TensorUtilitiesSimd.Transpose(b);
-                Log.Information($"After transpose: B rows: {b.Rows}, B columns: {b.Cols}");
-            }
-
-            if (a.Rank != 2)
-                throw new ArgumentException($"A must be rank 2, got {a.Rank}");
-
-            if (b.Rank != 2)
-                throw new ArgumentException($"B must be rank 2, got {b.Rank}");
-
-            if (a.Cols != b.Rows)
-            {
-                throw new ArgumentException(
-                    $"Cannot multiply ({a.Rows}x{a.Cols}) by ({b.Rows}x{b.Cols})");
-            }
-
-            int resultRows = transposeA ? a.Cols : a.Rows;
-            int resultCols = transposeB ? b.Rows : b.Cols;
-
-            if (result.Rows != a.Rows || result.Cols != b.Cols)
-            {
-                throw new ArgumentException(
-                    $"Result is ({result.Rows}x{result.Cols}) but expected ({a.Rows}x{b.Cols})");
-            }
-
-            result =
-                new Tensor(resultRows, resultCols);
-
-            // transpose once
-            // Tensor bt = TensorUtilities.Transpose(b);
-
-            int m = a.Rows;
-            int n = b.Cols;
-            int k = a.Cols;
-
-
-            for (int i = 0; i < m; i++)
-            {
-                ReadOnlySpan<float> rowA =
-                    new ReadOnlySpan<float>(
-                        a.Data,
-                        i * k,
-                        k);
-
-                for (int j = 0; j < n; j++)
-                {
-                    ReadOnlySpan<float> rowB =
-                        new ReadOnlySpan<float>(
-                            b.Data,
-                            j * k,
-                            k);
-
-                    result.Data[i * n + j] =
-
-
-                        DotSimd(rowA, rowB);
                 }
             }
         }
-        */
 
         private static float DotSimd(ReadOnlySpan<float> a, ReadOnlySpan<float> b)
         {
@@ -466,47 +328,6 @@ namespace SimpleTransformer.Model.Extensions.Numerics
 
             return result;
         }
-
-        //Original - disabled for testing
-        /*
-        private static float DotSimd(
-            ReadOnlySpan<float> a,
-            ReadOnlySpan<float> b)
-        {
-            if (a.Length != b.Length)
-                throw new InvalidOperationException($"Dot product length mismatch: {a.Length} vs {b.Length}");
-            int width = Vector<float>.Count;
-
-            Vector<float> sum = Vector<float>.Zero;
-            try
-            {
-                int i = 0;
-                for (; i <= a.Length - width; i += width)
-                {
-                    var va = new Vector<float>(a.Slice(i));
-                    var vb = new Vector<float>(b.Slice(i));
-
-                    sum += va * vb;
-                }
-
-                float result = 0f;
-
-                for (int j = 0; j < width; j++)
-                    result += sum[j];
-
-                for (; i < a.Length; i++)
-                    result += a[i] * b[i];
-
-                // Log.Information($"[DotSimd] Execution completed successfully with result: {result}.");
-                return result;
-            }
-            catch (Exception ex)
-            {
-                Log.Error(ex, $"Error in DotSimd: {ex.Message}");
-                throw;
-            }
-        }
-        */
         #endregion
         
         #region Special functions
@@ -573,51 +394,6 @@ namespace SimpleTransformer.Model.Extensions.Numerics
                 xRef = 0.5f * x * (1f + MathF.Tanh(u));
             }
         }
-
-        //Old version
-        /*
-        public static void GeluInPlace(TensorBase tensor)
-        {
-            Span<float> data = tensor.Span;
-
-            int width = Vector<float>.Count;
-
-            var half = new Vector<float>(0.5f);
-            var one = new Vector<float>(1f);
-            var c = new Vector<float>(0.044715f);
-            var s = new Vector<float>(0.7978845608f);
-
-            int i = 0;
-
-            for (; i <= data.Length - width; i += width)
-            {
-                Vector<float> x = new(data.Slice(i));
-
-                Vector<float> x2 = x * x;
-                Vector<float> x3 = x2 * x;
-
-                Vector<float> u = s * (x + c * x3);
-
-                float[] tmp = new float[width];
-                u.CopyTo(tmp);
-
-                for (int j = 0; j < width; j++)
-                    tmp[j] = MathF.Tanh(tmp[j]);
-
-                Vector<float> t = new(tmp);
-
-                (half * x * (one + t)).CopyTo(data.Slice(i));
-            }
-
-            // tail
-            for (; i < data.Length; i++)
-            {
-                float x = data[i];
-                float u = 0.7978845608f * (x + 0.044715f * x * x * x);
-                data[i] = 0.5f * x * (1 + MathF.Tanh(u));
-            }
-        }
-        */
 
         public static void GeluBackwardInto(
             TensorBase input,

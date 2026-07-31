@@ -1,3 +1,6 @@
+using System.Diagnostics;
+using Serilog;
+
 namespace SimpleTransformer.Model
 {
     public class FeedForwardLayer : ITrainableLayer
@@ -26,9 +29,20 @@ namespace SimpleTransformer.Model
 
         public TensorBase Forward(TensorBase input)
         {
+            var forwardWatch = Stopwatch.StartNew();
+            Log.Information("[FeedForwardLayer.Forward] Started forward propagation...");
+            //Linear layer: expansion
             TensorBase x = _expand.Forward(input);
+            Log.Information($"[FeedForwardLayer.Forward] Finished linear expansion in {forwardWatch.ElapsedMilliseconds} ms.");
+            forwardWatch.Restart();
+            //Gelu
             x = _activation.Forward(x);
+            Log.Information($"[FeedForwardLayer.Forward] Finished gelu activation in {forwardWatch.ElapsedMilliseconds} ms.");
+            forwardWatch.Restart();
+            //Linear layer: projection
             x = _project.Forward(x);
+            Log.Information($"[FeedForwardLayer.Forward] Finished linear projection in {forwardWatch.ElapsedMilliseconds} ms.");
+            forwardWatch.Stop();
 
             return x;
         }

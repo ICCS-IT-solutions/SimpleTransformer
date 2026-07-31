@@ -89,7 +89,7 @@ namespace SimpleTransformer.Model
 
                         if (tokenId < 0 || tokenId >= _vocabSize)
                             throw new ArgumentException(
-                                $"Token ID {tokenId} is outside of the vocabulary.");
+                                $"Token ID {tokenId} is outside of the vocabulary. Batch {b}, Sequence {s}. Vocabulary size {_vocabSize}.");
 
                         TensorUtilitiesSimd.CopyRow(
                             _embeddings,

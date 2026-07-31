@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using Serilog;
 using SimpleTransformer.Model.Extensions;
 using SimpleTransformer.Model.Extensions.Numerics;
 
@@ -63,7 +65,6 @@ namespace SimpleTransformer.Model
                     layer,
                     result);
             }
-
             return output;
         }
 

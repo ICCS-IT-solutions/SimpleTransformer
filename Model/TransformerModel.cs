@@ -1,4 +1,5 @@
 using Serilog;
+using SimpleTransformer.Api.Endpoints.Services;
 using SimpleTransformer.Model.Extensions;
 using SimpleTransformer.Model.Extensions.Numerics;
 
@@ -15,22 +16,32 @@ namespace SimpleTransformer.Model
         {
             get
             {
+                // 1. Input Embeddings
                 foreach (var p in _embedding.Parameters)
                     yield return p;
-                
-                foreach (var p in _outputProjection.Parameters)
-                    yield return p;
 
+                // 2. Positional Encodings (if trainable/learned)
+                if (_position is ITrainableLayer trainablePos)
+                {
+                    foreach (var p in trainablePos.Parameters)
+                        yield return p;
+                }
+
+                // 3. Transformer Block Stack (Sequential execution order)
                 foreach (var layer in _layers)
                 {
-                    if (layer is ITrainableLayer trainable)
+                    if (layer is ITrainableLayer trainableLayer)
                     {
-                        foreach (var p in trainable.Parameters)
+                        foreach (var p in trainableLayer.Parameters)
                             yield return p;
                     }
                 }
+
+                // 4. Output Head (Final Linear projection)
+                foreach (var p in _outputProjection.Parameters)
+                    yield return p;
             }
-        }       
+        }      
         private ILossFunction _loss = null!;
         private IOptimizer _optimizer = null!;
         
@@ -60,7 +71,22 @@ namespace SimpleTransformer.Model
             BuildModel();
             Log.Information("Transformer model ready to be loaded.");
         }
-        private (TensorBase logits, TensorBase hiddenState) Forward(TensorBase input)
+
+        public static async Task<TransformerModel> FromCheckpointAsync(string filepath, TrainingService trainingService)
+        {
+            // Load checkpoint payload containing config & serialized weights
+            var checkpoint = await trainingService.LoadCheckpointFromBinaryFile(filepath);
+
+            // 1. Instantiate model using the exact config saved in the checkpoint
+            var model = new TransformerModel(checkpoint.Config);
+
+            // 2. Hydrate loaded weights into the new model instance
+            model.LoadCheckpointData(checkpoint.Parameters);
+
+            return model;
+        }
+
+        public (TensorBase logits, TensorBase hiddenState) Forward(TensorBase input)
         {
             TensorBase x = _embedding.Forward(input);
 
@@ -113,6 +139,51 @@ namespace SimpleTransformer.Model
                     trainableLayer.ZeroGradients();
                 }
             }
+        }
+
+        /// <summary>
+        /// Hydrates model weight (and optional gradient) tensors from a loaded checkpoint.
+        /// </summary>
+        public void LoadCheckpointData(IReadOnlyList<TrainableParameterCheckpoint> checkpointParameters)
+        {
+            // Flatten parameters to a list to allow index matching
+            var modelParameters = Parameters.ToList();
+
+            if (modelParameters.Count != checkpointParameters.Count)
+            {
+                throw new InvalidOperationException(
+                    $"Checkpoint parameter count ({checkpointParameters.Count}) does not match model parameter count ({modelParameters.Count}).");
+            }
+
+            for (int i = 0; i < modelParameters.Count; i++)
+            {
+                var targetParam = modelParameters[i];
+                var loadedParam = checkpointParameters[i];
+
+                // 1. Verify shape compatibility
+                if (!Enumerable.SequenceEqual(targetParam.Value.Shape, loadedParam.Value.Shape))
+                {
+                    throw new InvalidOperationException(
+                        $"Parameter shape mismatch at index {i}. Expected [{string.Join(',', targetParam.Value.Shape)}], but checkpoint has [{string.Join(',', loadedParam.Value.Shape)}].");
+                }
+
+                // 2. Fast copy of raw float data into live model tensors
+                Array.Copy(loadedParam.Value.Data, targetParam.Value.Data, targetParam.Value.Data.Length);
+
+                // 3. Hydrate gradients if present and target expects them
+                if (loadedParam.Gradient != null && targetParam.Gradient != null)
+                {
+                    if (!Enumerable.SequenceEqual(targetParam.Gradient.Shape, loadedParam.Gradient.Shape))
+                    {
+                        throw new InvalidOperationException(
+                            $"Gradient shape mismatch at index {i}.");
+                    }
+
+                    Array.Copy(loadedParam.Gradient.Data, targetParam.Gradient.Data, targetParam.Gradient.Data.Length);
+                }
+            }
+
+            Log.Information("Successfully hydrated model weights from checkpoint.");
         }
 
         public void Train(

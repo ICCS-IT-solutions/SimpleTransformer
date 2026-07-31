@@ -125,6 +125,8 @@ namespace SimpleTransformer.Model
             batchWatch.Stop();
             stepWatch.Stop();
             Log.Information("[TransformerBlock.ForwardBatch] Finished forward propagation in {ElapsedMilliseconds} ms.", batchWatch.ElapsedMilliseconds);
+            //Separator line for readability
+            Log.Information("");
             return _layerNorm2.Forward(ff);
         }
         public TensorBase Backward(TensorBase gradient)

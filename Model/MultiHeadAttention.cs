@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using Serilog;
 using SimpleTransformer.Model.Extensions;
 using SimpleTransformer.Model.Extensions.Numerics;
 
@@ -65,16 +67,20 @@ namespace SimpleTransformer.Model
         }
         private TensorBase ForwardBatch(TensorBase input, TensorBase? mask)
         {
+            var batchWatch = Stopwatch.StartNew(); 
+            Log.Information($"[MultiHeadAttention.ForwardBatch] Started forward propagation...");
             Tensor output =
                 new Tensor(
                     input.Layers,
                     input.Rows,
                     input.Cols);
 
+            
             for (int b = 0; b < input.Layers; b++)
             {
-                TensorBase inputSlice =
-                    TensorUtilitiesSimd.GetLayer(input, b);
+                var layerWatch = Stopwatch.StartNew();
+                Log.Information($"[MultiHeadAttention.ForwardBatch] Forwarding layer {b}...");
+                TensorBase inputSlice = TensorUtilitiesSimd.GetLayer(input, b);
 
                 TensorBase? maskSlice = null;
 
@@ -82,15 +88,19 @@ namespace SimpleTransformer.Model
                     maskSlice =
                         TensorUtilitiesSimd.GetLayer(mask, b);
 
-                TensorBase result =
-                    ForwardSequence(inputSlice, maskSlice);
+                TensorBase result = ForwardSequence(inputSlice, maskSlice);
 
                 TensorUtilitiesSimd.SetLayer(
                     output,
                     b,
                     result);
+
+                layerWatch.Stop();
+                Log.Information($"[MultiHeadAttention.ForwardBatch] Finished layer {b} in {layerWatch.ElapsedMilliseconds} ms.");
             }
 
+            batchWatch.Stop();
+            Log.Information($"[MultiHeadAttention.ForwardBatch] Finished forward propagation in {batchWatch.ElapsedMilliseconds} ms.");
             return output;
         }        
         public void ZeroGradients()
