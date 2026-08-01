@@ -121,7 +121,7 @@ namespace SimpleTransformer.Model
             TensorBase ff = _feedForward.Forward(norm1);
             Log.Information($"[TransformerBlock.ForwardBatch] FeedForward Forward completed in {opWatch.ElapsedMilliseconds} ms.");
             opWatch.Restart();
-            
+
             DiagonisticUtilities.AssertNoNaN(ff, "FeedForward Pre-Residual");
 
             // 5. Out-of-Place Residual Addition 2
@@ -208,39 +208,59 @@ namespace SimpleTransformer.Model
         {
             Log.Information("[TransformerBlock.BackwardBatch] Started backpropagation...");
             var batchWatch = Stopwatch.StartNew();
+            var opWatch = Stopwatch.StartNew();
             DiagonisticUtilities.AssertNoNaN(gradient, "Block Input Gradient");
             
             // 1. Backprop through LayerNorm2 (Post-FFN Norm)
             // Yields gradient w.r.t. (FFN(x) + x)
             TensorBase dFfResidual = _layerNorm2.Backward(gradient);
+            Log.Information($"[TransformerBlock.BackwardBatch] LayerNorm2 Backward completed in {opWatch.ElapsedMilliseconds} ms.");
+            opWatch.Restart();
+
             DiagonisticUtilities.AssertNoNaN(dFfResidual, "dFfResidual after LayerNorm2");
 
             // 2. Backprop through FeedForward network
             TensorBase dFf = _feedForward.Backward(dFfResidual);
+            Log.Information($"[TransformerBlock.BackwardBatch] FeedForward Backward completed in {opWatch.ElapsedMilliseconds} ms.");
+            opWatch.Restart();
+
             DiagonisticUtilities.AssertNoNaN(dFf, "dFf after FeedForward Backward");
 
             // 3. Add gradients from Residual Connection 2 (Skip connection around FFN)
             // dNorm1 = dFf (from sublayer) + dFfResidual (from skip connection)
             TensorBase dNorm1 = new Tensor(dFf.Layers, dFf.Rows, dFf.Cols);
             TensorMathSimd.ElementWiseAddInto(dFf, dFfResidual, dNorm1);
+            Log.Information($"[TransformerBlock.BackwardBatch] Residual Addition completed in {opWatch.ElapsedMilliseconds} ms.");
+            opWatch.Restart();
+
             DiagonisticUtilities.AssertNoNaN(dNorm1, "dNorm1 after Residual 2 Addition");
 
             // 4. Backprop through LayerNorm1 (Post-Attention Norm)
             // Yields gradient w.r.t. (Attention(x) + x)
             TensorBase dAttnResidual = _layerNorm1.Backward(dNorm1);
+            Log.Information($"[TransformerBlock.BackwardBatch] LayerNorm1 Backward completed in {opWatch.ElapsedMilliseconds} ms.");
+            opWatch.Restart();
+
             DiagonisticUtilities.AssertNoNaN(dAttnResidual, "dAttnResidual after LayerNorm1");
 
             // 5. Backprop through MultiHeadAttention
             TensorBase dAttention = _multiHeadAttention.Backward(dAttnResidual);
+            Log.Information($"[TransformerBlock.BackwardBatch] MultiHeadAttention Backward completed in {opWatch.ElapsedMilliseconds} ms.");
+            opWatch.Restart();
+
             DiagonisticUtilities.AssertNoNaN(dAttention, "dAttention after MultiHeadAttention Backward");
 
             // 6. Add gradients from Residual Connection 1 (Skip connection around Attention)
             // dInput = dAttention (from sublayer) + dAttnResidual (from skip connection)
             TensorBase dInput = new Tensor(dAttention.Layers, dAttention.Rows, dAttention.Cols);
             TensorMathSimd.ElementWiseAddInto(dAttention, dAttnResidual, dInput);
+            Log.Information($"[TransformerBlock.BackwardBatch] Residual Addition completed in {opWatch.ElapsedMilliseconds} ms.");
+            opWatch.Restart();
+
             DiagonisticUtilities.AssertNoNaN(dInput, "dInput after Residual 1 Addition");
 
-            
+            batchWatch.Stop();
+            opWatch.Stop();
             Log.Information($"[TransformerBlock.BackwardBatch] Finished backpropagation in {batchWatch.ElapsedMilliseconds} ms.");
             return dInput;
         }
