@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
+using System.Text;
 using Serilog;
 using SimpleTransformer.Api.Endpoints.Services;
 using SimpleTransformer.Model.Extensions;
@@ -55,17 +57,14 @@ namespace SimpleTransformer.Model
             NumHeads = 12, // Common number of attention heads for BERT-like models
             FeedForwardSize = 3072, // Common feed-forward size for BERT-like models
             MaxSequenceLength = 512, // Common maximum sequence length for BERT-like models
-            DropoutRate = 0.1f,
-            //These pertain to training not the model.
-            LearningRate = 0.001f,
-            BatchSize = 8,
-            Epochs = 10
         };
         private readonly List<ILayer> _layers = new();
         public TransformerConfig Config { get; }
-        public TransformerModel(TransformerConfig? config = null)
+        public TrainingConfig TrainingConfig { get; }
+        public TransformerModel(TransformerConfig? config = null, TrainingConfig? trainingConfig = null)
         {
             Config = config ?? DefaultConfig;
+            TrainingConfig = trainingConfig ?? new TrainingConfig();
             ValidateConfig();
             Log.Information("Configuration is valid. Proceeding...");
 
@@ -75,17 +74,12 @@ namespace SimpleTransformer.Model
 
         public static async Task<TransformerModel> FromCheckpointAsync(string filepath, TrainingService trainingService)
         {
-            // Load checkpoint payload containing config & serialized weights
-            var checkpoint = await trainingService.LoadCheckpointFromBinaryFile(filepath);
+            // FromCheckpointFileAsync already instantiates the model and hydrates its weights
+            var checkpoint = await FromCheckpointFileAsync(filepath);
 
-            // 1. Instantiate model using the exact config saved in the checkpoint
-            var model = new TransformerModel(checkpoint.Config);
-
-            // 2. Hydrate loaded weights into the new model instance
-            model.LoadCheckpointData(checkpoint.Parameters);
-
-            return model;
+            return checkpoint.Model;
         }
+
 
         public (TensorBase logits, TensorBase hiddenState) Forward(TensorBase input)
         {
@@ -182,6 +176,190 @@ namespace SimpleTransformer.Model
         }
 
         /// <summary>
+        /// Stream-based serialization: decoupling from direct File API dependencies
+        /// </summary>
+        public void SaveCheckpoint(Stream destinationStream, int currentEpoch, float currentLoss)
+        {
+            using var writer = new BinaryWriter(destinationStream, Encoding.UTF8, leaveOpen: true);
+            
+            writer.Write("STCK".ToCharArray()); // Magic header
+            writer.Write(1);                    // Schema version
+            writer.Write(currentEpoch);
+            writer.Write(currentLoss);
+
+            CheckpointConfigExtensions.WriteConfig(writer, Config);
+
+            writer.Write(Parameters.Count());
+            foreach (var param in Parameters)
+            {
+                // Convert Value to TensorData
+                var valueData = new TensorData { Shape = param.Value.Shape, Data = param.Value.Data };
+                WriteTensor(writer, valueData);
+
+                bool hasGrad = param.Gradient != null;
+                writer.Write(hasGrad);
+
+                if (hasGrad)
+                {
+                    // Convert Gradient to TensorData
+                    var gradData = new TensorData { Shape = param.Gradient!.Shape, Data = param.Gradient!.Data };
+                    WriteTensor(writer, gradData);
+                }
+            }
+        }
+
+        private static void WriteTensor(BinaryWriter writer, TensorData tensor)
+        {
+            // 1. Guard check to ensure buffer and shape dimensions match
+            if (!tensor.IsValid)
+            {
+                throw new InvalidOperationException(
+                    $"Cannot serialize invalid TensorData. Data length ({tensor.Data.Length}) " +
+                    $"does not match shape product ({tensor.TotalElements}).");
+            }
+
+            // 2. Write rank (number of dimensions)
+            writer.Write(tensor.Shape.Length);
+
+            // 3. Write shape dimensions
+            for (int i = 0; i < tensor.Shape.Length; i++)
+            {
+                writer.Write(tensor.Shape[i]);
+            }
+
+            // 4. Zero-copy write float buffer directly to stream
+            ReadOnlySpan<byte> byteBuffer = MemoryMarshal.AsBytes(tensor.Data.AsSpan());
+            writer.BaseStream.Write(byteBuffer);
+        }
+
+        /// <summary>
+        /// Convenient file-path helper wrapper around Stream deserialization.
+        /// </summary>
+        public static async Task<(TransformerModel Model, int Epoch, float Loss)> FromCheckpointFileAsync(string filePath)
+        {
+            if (!File.Exists(filePath))
+                throw new FileNotFoundException($"Checkpoint file not found: {filePath}");
+
+            await using var stream = File.OpenRead(filePath);
+            return LoadCheckpoint(stream);
+        }
+
+        /// <summary>
+        /// Static factory method to instantiate and hydrate a TransformerModel directly from a checkpoint stream.
+        /// </summary>
+        public static (TransformerModel Model, int Epoch, float Loss) LoadCheckpoint(Stream sourceStream)
+        {
+            using var reader = new BinaryReader(sourceStream, Encoding.UTF8, leaveOpen: true);
+
+            string magic = new string(reader.ReadChars(4));
+            if (magic != "STCK")
+                throw new InvalidDataException($"Invalid checkpoint file magic header: '{magic}'. Expected 'STCK'.");
+
+            int version = reader.ReadInt32();
+            int epoch = reader.ReadInt32();
+            float loss = reader.ReadSingle();
+
+            var config = CheckpointConfigExtensions.ReadConfig(reader);
+            var model = new TransformerModel(config);
+
+            int paramCount = reader.ReadInt32();
+            var loadedParameters = new List<TrainableParameterCheckpoint>(paramCount);
+
+            for (int i = 0; i < paramCount; i++)
+            {
+                var val = ReadTensorOptimized(reader);
+                bool hasGrad = reader.ReadBoolean();
+                TensorData? grad = hasGrad ? ReadTensorOptimized(reader) : null;
+
+                loadedParameters.Add(new TrainableParameterCheckpoint { Value = val, Gradient = grad });
+            }
+
+            model.LoadCheckpointData(loadedParameters);
+            return (model, epoch, loss);
+        }        
+
+        private static TensorData ReadTensor(BinaryReader reader)
+        {
+            int rank = reader.ReadInt32();
+            if (rank < 0 || rank > 8) // Reasonable guardrail against corrupted headers
+            {
+                throw new InvalidDataException($"Invalid tensor rank: {rank}");
+            }
+
+            int[] shape = new int[rank];
+            int totalElements = 1;
+
+            for (int i = 0; i < rank; i++)
+            {
+                shape[i] = reader.ReadInt32();
+                totalElements *= shape[i];
+            }
+
+            float[] data = new float[totalElements];
+            Span<byte> byteBuffer = MemoryMarshal.AsBytes(data.AsSpan());
+
+            int bytesRead = reader.BaseStream.Read(byteBuffer);
+            if (bytesRead < byteBuffer.Length)
+            {
+                throw new EndOfStreamException(
+                    $"Expected {byteBuffer.Length} bytes for tensor payload, but only read {bytesRead}.");
+            }
+
+            return new TensorData
+            {
+                Shape = shape,
+                Data = data
+            };
+        }
+
+        private static TensorData ReadTensorOptimized(BinaryReader reader)
+        {
+            int rank = reader.ReadInt32();
+            if (rank <= 0 || rank > 8)
+            {
+                throw new InvalidDataException($"Corrupt checkpoint format: invalid tensor rank ({rank}).");
+            }
+
+            int[] shape = new int[rank];
+            long totalElements = 1;
+
+            for (int i = 0; i < rank; i++)
+            {
+                shape[i] = reader.ReadInt32();
+                
+                // Guard against negative or absurdly large individual dimensions
+                if (shape[i] <= 0 || shape[i] > 100_000_000) 
+                {
+                    throw new InvalidDataException($"Corrupt checkpoint format: dimension [{i}] has invalid size ({shape[i]}).");
+                }
+
+                // Prevent overflow before multiplying
+                if (totalElements > (long.MaxValue / shape[i]))
+                {
+                    throw new InvalidDataException($"Corrupt checkpoint format: calculated tensor size exceeds maximum allowable limits.");
+                }
+
+                totalElements *= shape[i];
+            }
+
+            if (totalElements > int.MaxValue)
+            {
+                throw new InvalidDataException($"Tensor size ({totalElements} elements) exceeds standard C# array limit.");
+            }
+
+            float[] data = new float[(int)totalElements];
+            Span<byte> byteBuffer = MemoryMarshal.AsBytes(data.AsSpan());
+            
+            reader.BaseStream.ReadExactly(byteBuffer);
+
+            return new TensorData
+            {
+                Shape = shape,
+                Data = data
+            };
+        }       
+
+        /// <summary>
         /// Hydrates model weight (and optional gradient) tensors from a loaded checkpoint.
         /// </summary>
         public void LoadCheckpointData(IReadOnlyList<TrainableParameterCheckpoint> checkpointParameters)
@@ -227,27 +405,34 @@ namespace SimpleTransformer.Model
         }
 
         public void Train(
-            IReadOnlyList<(TensorBase Input, TensorBase Target)> dataset)
+            IReadOnlyList<(TensorBase Input, TensorBase Target)> dataset,
+            int startEpoch = 0,
+            IProgress<TrainingProgressReport>? progress = null,
+            CancellationToken cancellationToken = default)
         {
-            for (int epoch = 0; epoch < Config.Epochs; epoch++)
-            {
-                float epochLoss = 0f;
+            var stopwatch = Stopwatch.StartNew();
 
+            for (int epoch = startEpoch; epoch < TrainingConfig.Epochs; epoch++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                float epochLoss = 0f;
                 foreach (var sample in dataset)
                 {
-                    epochLoss +=
-                        TrainStep(sample.Input, sample.Target);
+                    epochLoss += TrainStep(sample.Input, sample.Target);
                 }
 
                 epochLoss /= dataset.Count;
 
-                Log.Information(
-                    "Epoch {Epoch}: Loss={Loss:F6}",
-                    epoch + 1,
-                    epochLoss);
+                // Report progress back to caller (TrainingService or CLI)
+                progress?.Report(new TrainingProgressReport(
+                    CurrentEpoch: epoch + 1,
+                    TotalEpochs: TrainingConfig.Epochs,
+                    Loss: epochLoss,
+                    ElapsedTime: stopwatch.Elapsed
+                ));
             }
         }
-
 
         public float TrainStep(TensorBase inputs, TensorBase expectedOutputs)
         {
@@ -326,7 +511,7 @@ namespace SimpleTransformer.Model
             _outputProjection = new LinearLayer(Config.EmbeddingSize, Config.VocabSize);
             _position = new(Config.EmbeddingSize, Config.MaxSequenceLength);
             _loss = new CrossEntropyLoss();
-            _optimizer = new SgdOptimizer(Config.LearningRate);
+            _optimizer = new SgdOptimizer(TrainingConfig.LearningRate);
 
             Log.Information($@"Current configuration:
 Vocabulary size: {Config.VocabSize}

@@ -68,10 +68,6 @@ namespace SimpleTransformer.Api
                         NumHeads = 12,
                         FeedForwardSize = 3072,
                         MaxSequenceLength = 128,
-                        LearningRate = 0.001f,
-                        BatchSize = 8,
-                        Epochs = 10,
-                        DropoutRate = 0.1f
                     };
                     var model = new TransformerModel(config);
                     Log.Information($"Transformer model loaded in {watch.ElapsedMilliseconds}ms.");

@@ -92,29 +92,44 @@ namespace SimpleTransformer.Model
         {
             DiagonisticUtilities.AssertNoNaN(input, "Block Input");
             var batchWatch = Stopwatch.StartNew();
-            var stepWatch = Stopwatch.StartNew();
+            var opWatch = Stopwatch.StartNew();
             Log.Information("[TransformerBlock.ForwardBatch] Started forward propagation...");
             
             // 1. Attention Pass
             TensorBase attention = _multiHeadAttention.Forward(input);
+            Log.Information($"[TransformerBlock.ForwardBatch] MultiHeadAttention Forward completed in {opWatch.ElapsedMilliseconds} ms.");
+            opWatch.Restart();
+
             DiagonisticUtilities.AssertNoNaN(attention, "Attention Pre-Residual");
 
             // 2. Out-of-Place Residual Addition 1
             TensorBase attentionResidual = new Tensor(attention.Layers, attention.Rows, attention.Cols);
             TensorMathSimd.ElementWiseAddInto(attention, input, attentionResidual); // Use input directly as residual
+            Log.Information($"[TransformerBlock.ForwardBatch] Out-of-Place Residual Addition completed in {opWatch.ElapsedMilliseconds} ms.");
+            opWatch.Restart();
+
             DiagonisticUtilities.AssertNoNaN(attentionResidual, "Attention Post-Residual");
 
             // 3. LayerNorm 1
             TensorBase norm1 = _layerNorm1.Forward(attentionResidual);
+            Log.Information($"[TransformerBlock.ForwardBatch] LayerNorm1 Forward completed in {opWatch.ElapsedMilliseconds} ms.");
+            opWatch.Restart();
+
             DiagonisticUtilities.AssertNoNaN(norm1, "Norm1");
 
             // 4. FeedForward Pass
             TensorBase ff = _feedForward.Forward(norm1);
+            Log.Information($"[TransformerBlock.ForwardBatch] FeedForward Forward completed in {opWatch.ElapsedMilliseconds} ms.");
+            opWatch.Restart();
+            
             DiagonisticUtilities.AssertNoNaN(ff, "FeedForward Pre-Residual");
 
             // 5. Out-of-Place Residual Addition 2
             TensorBase ffResidual = new Tensor(ff.Layers, ff.Rows, ff.Cols);
             TensorMathSimd.ElementWiseAddInto(ff, norm1, ffResidual);
+            Log.Information($"[TransformerBlock.ForwardBatch] Out-of-Place Residual Addition completed in {opWatch.ElapsedMilliseconds} ms.");
+            opWatch.Restart();
+
             DiagonisticUtilities.AssertNoNaN(ffResidual, "FeedForward Post-Residual");
 
             // Cache intermediate states for backward pass
@@ -125,7 +140,7 @@ namespace SimpleTransformer.Model
             _lastResidual2 = norm1;
 
             batchWatch.Stop();
-            stepWatch.Stop();
+            opWatch.Stop();
             Log.Information($"[TransformerBlock.ForwardBatch] Finished forward propagation in {batchWatch.ElapsedMilliseconds} ms.");
 
             return _layerNorm2.Forward(ffResidual);
@@ -147,25 +162,41 @@ namespace SimpleTransformer.Model
             Log.Information("[TransformerBlock.BackwardSequence] Started backpropagation...");
 
             TensorBase dResidual2 = _layerNorm2.Backward(gradient);
+            Log.Information($"[TransformerBlock.BackwardSequence] LayerNorm2 Backward completed in {opWatch.ElapsedMilliseconds} ms.");
+            opWatch.Restart();
             DiagonisticUtilities.AssertNoNaN(dResidual2, "dResidual2 after LayerNorm2 Backward");
 
             TensorBase dFf = _feedForward.Backward(dResidual2);
+            Log.Information($"[TransformerBlock.BackwardSequence] FeedForward Backward completed in {opWatch.ElapsedMilliseconds} ms.");
+            opWatch.Restart();
             DiagonisticUtilities.AssertNoNaN(dFf, "dFf after FeedForward Backward");
 
             TensorBase dNorm1 = new Tensor(dFf.Rows, dFf.Cols);
 
             TensorMathSimd.ElementWiseAddInto(dFf, dResidual2, dNorm1);
+            Log.Information($"[TransformerBlock.BackwardSequence] Residual Addition completed in {opWatch.ElapsedMilliseconds} ms.");
+            opWatch.Restart();
+
             DiagonisticUtilities.AssertNoNaN(dNorm1, "dNorm1 after Residual Addition");
 
             TensorBase dResidual1 = _layerNorm1.Backward(dNorm1);
+            Log.Information($"[TransformerBlock.BackwardSequence] LayerNorm1 Backward completed in {opWatch.ElapsedMilliseconds} ms.");
+            opWatch.Restart();
+
             DiagonisticUtilities.AssertNoNaN(dResidual1, "dResidual1 after LayerNorm1 Backward");
 
             TensorBase dAttention = _multiHeadAttention.Backward(dResidual1);
+            Log.Information($"[TransformerBlock.BackwardSequence] MultiHeadAttention Backward completed in {opWatch.ElapsedMilliseconds} ms.");
+            opWatch.Restart();
+
             DiagonisticUtilities.AssertNoNaN(dAttention, "dAttention after MultiHeadAttention Backward");
 
             TensorBase dInput = new Tensor(dAttention.Rows, dAttention.Cols);
 
             TensorMathSimd.ElementWiseAddInto(dAttention, dResidual1, dInput);
+            Log.Information($"[TransformerBlock.BackwardSequence] Residual Addition completed in {opWatch.ElapsedMilliseconds} ms.");
+            opWatch.Restart();
+
             DiagonisticUtilities.AssertNoNaN(dInput, "dInput after Residual Addition");
 
             batchWatch.Stop();

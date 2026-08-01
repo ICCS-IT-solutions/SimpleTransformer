@@ -74,6 +74,7 @@ namespace SimpleTransformer.Model
 
             Tensor concatenatedBatch = new Tensor(layers, rows, _embeddingSize);
 
+            // Process batch items sequentially to ensure shared AttentionHead state is never mutated concurrently
             for (int b = 0; b < layers; b++)
             {
                 TensorBase inputSlice = TensorUtilitiesSimd.GetLayer(input, b);
@@ -94,9 +95,8 @@ namespace SimpleTransformer.Model
             for (int i = 0; i < numHeads; i++)
             {
                 TensorBase headOutput = _heads[i].Forward(input, mask);
-                int startCol = i * _headSize;
                 
-                // Optimized strided slice copy directly into concatenated output buffer
+                int startCol = i * _headSize;
                 TensorUtilitiesSimd.CopyBlock(headOutput, 0, targetConcat, startCol, rows, _headSize);
             }
         }
@@ -128,6 +128,7 @@ namespace SimpleTransformer.Model
             int layers = gradient.Layers;
             Tensor inputGradientBatch = new Tensor(layers, gradient.Rows, _embeddingSize);
 
+            // Sequential iteration over batch dimension prevents race conditions inside AttentionHead state
             for (int b = 0; b < layers; b++)
             {
                 TensorBase dConcatSlice = TensorUtilitiesSimd.GetLayer(dConcatBatch, b);
@@ -148,23 +149,21 @@ namespace SimpleTransformer.Model
             {
                 int startColumn = i * _headSize;
 
-                // Zero-allocation path: Use CopyColumnRangeInto or CopyBlock to populate head gradient
+                // Extract a contiguous block tensor instead of strided TensorView
                 Tensor headGradient = new Tensor(rows, _headSize);
                 TensorUtilitiesSimd.CopyBlock(dConcat, startColumn, headGradient, 0, rows, _headSize);
 
                 TensorBase dInputHead = _heads[i].Backward(headGradient);
 
-                // Accumulate gradients into target Input Gradient using SIMD
+                // Accumulate head gradients directly using SIMD
                 TensorMathSimd.ElementWiseAddInPlace(targetInputGradient, dInputHead);
             }
         }
 
         public void ZeroGradients()
         {
-            for (int i = 0; i < _heads.Length; i++)
-            {
-                _heads[i].ZeroGradients();
-            }
+            foreach (var head in _heads)
+                head.ZeroGradients();
 
             _outputProjection.ZeroGradients();
         }

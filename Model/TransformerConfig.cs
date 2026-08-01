@@ -10,6 +10,9 @@ namespace SimpleTransformer.Model
         public int NumHeads { get; set; } = 2;
         public int FeedForwardSize { get; set; } = 64;
         public int MaxSequenceLength { get; set; } = 16;
+    }
+    public class TrainingConfig
+    {
         //Rates
         public float LearningRate { get; set; } = 0.001f;
         public int BatchSize { get; set; } = 8;

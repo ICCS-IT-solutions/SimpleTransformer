@@ -21,7 +21,13 @@ namespace SimpleTransformer.Api.Endpoints.Controllers
         [HttpPost("api/v1/train/live")]
         public async Task<ApiResponse<TrainingResponse>> Train([FromBody] TrainingRequest req)
         { 
-            return await _trainingService.TrainModelFromText(req.InputText);
+            //Can one create temporary files in memory and pass them to the training service? I think so, but for now, let's just pass the text directly.
+            var tempFilePath = Path.GetTempFileName();
+            using (var writer = new StreamWriter(tempFilePath))
+            {
+                await writer.WriteAsync(req.InputText);
+            }
+            return await _trainingService.TrainModelFromText(req);
         }
 
         [HttpPost("api/v1/train/file")]
