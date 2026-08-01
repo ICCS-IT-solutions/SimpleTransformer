@@ -30,15 +30,14 @@ namespace SimpleTransformer.Model.Extensions.Numerics
             int maskStride = mask.Stride;
             int width = Vector<float>.Count;
 
-            // Capture raw heap array and offsets to bypass lambda capture limits
             float[] scoresBuffer = scores.Buffer; int scoresOffset = scores.Offset;
             float[] maskBuffer = mask.Buffer; int maskOffset = mask.Offset;
 
-            var vMaskValue = new Vector<float>(-1e9f);
+            // Use float.NegativeInfinity for strict masking
+            var vMaskValue = new Vector<float>(float.NegativeInfinity);
 
             Parallel.For(0, rows, r =>
             {
-                // Safely reconstruct local thread spans and references inside the loop frame
                 ReadOnlySpan<float> threadMaskSpan = maskBuffer.AsSpan(maskOffset);
                 Span<float> threadScoresSpan = scoresBuffer.AsSpan(scoresOffset);
 
@@ -64,7 +63,7 @@ namespace SimpleTransformer.Model.Extensions.Numerics
                 {
                     if (Unsafe.Add(ref pMaskRow, c) == 0f)
                     {
-                        Unsafe.Add(ref pScoresRow, c) = -1e9f;
+                        Unsafe.Add(ref pScoresRow, c) = float.NegativeInfinity;
                     }
                 }
             });

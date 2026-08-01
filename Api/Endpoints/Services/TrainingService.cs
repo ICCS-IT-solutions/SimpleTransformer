@@ -49,13 +49,14 @@ namespace SimpleTransformer.Api.Endpoints.Services
 
                 epochLoss /= miniBatches.Count;
 
+                Log.Information(
+                    "Epoch {Epoch}: Loss={Loss:F6}",
+                    epoch + 1,
+                    epochLoss
+                );
+
                 if (epoch % 10 == 0)
                 {
-                    Log.Information(
-                        "Epoch {Epoch}: Loss={Loss:F6}",
-                        epoch + 1,
-                        epochLoss);
-
                     var modelParameters = new List<TrainableParameterCheckpoint>();
                     foreach (var p in _model.Parameters)
                     {

@@ -18,6 +18,16 @@ namespace SimpleTransformer.Model
         public override int Rows => _rows;
         public override int Cols => _cols;
         public override int Stride => _stride;
+        public override int Size
+        {
+            get => Rank switch
+            {
+                1 => Cols,
+                2 => Rows * Cols,
+                3 => Layers * Rows * Cols,
+                _ => 0
+            };
+        }
 
         public Tensor(params int[] shape)
         {
@@ -51,64 +61,72 @@ namespace SimpleTransformer.Model
             }
             Data = new float[size];
         }
-        //Stacked matrix indexer for convenience
+        // Stacked matrix indexer (3D)
         public override float this[int layer, int row, int col]
         {
             get
             {
-                if (Rank != 3) throw new ArgumentException("Tensor must be a stacked matrix.");
+                if (Rank != 3) 
+                    throw new ArgumentException($"Tensor must be Rank 3 (current rank: {Rank}).");
                 if (layer < 0 || layer >= _layers || row < 0 || row >= _rows || col < 0 || col >= _cols) 
-                    throw new IndexOutOfRangeException("Layer, row or column index out of range.");
+                    throw new IndexOutOfRangeException($"Index [{layer}, {row}, {col}] out of bounds for shape [{_layers}, {_rows}, {_cols}].");
                 
-                // FIXED: Calculates layer hops using the structural _stride
-                return Data[layer * _rows * _stride + row * _stride + col];
+                return Buffer[Offset + layer * (_rows * _stride) + row * _stride + col];
             }
             set
             {
-                if (Rank != 3) throw new ArgumentException("Tensor must be a stacked matrix.");
+                if (Rank != 3) 
+                    throw new ArgumentException($"Tensor must be Rank 3 (current rank: {Rank}).");
                 if (layer < 0 || layer >= _layers || row < 0 || row >= _rows || col < 0 || col >= _cols) 
-                    throw new IndexOutOfRangeException("Layer, row or column index out of range.");
-                
-                Data[layer * _rows * _stride + row * _stride + col] = value;
+                    throw new IndexOutOfRangeException($"Index [{layer}, {row}, {col}] out of bounds for shape [{_layers}, {_rows}, {_cols}].");
+
+                Buffer[Offset + layer * (_rows * _stride) + row * _stride + col] = value;
             }
         }
 
-        // Matrix indexer using explicit strides
+        // Matrix indexer (2D)
         public override float this[int row, int col]
         {
             get
             {
-                if (Rank != 2) throw new ArgumentException("Tensor must be a matrix.");
+                if (Rank != 2) 
+                    throw new ArgumentException($"Tensor must be Rank 2 (current rank: {Rank}).");
                 if (row < 0 || row >= _rows || col < 0 || col >= _cols) 
-                    throw new IndexOutOfRangeException("Row or column index out of range.");
+                    throw new IndexOutOfRangeException($"Index [{row}, {col}] out of bounds for shape [{_rows}, {_cols}].");
                 
-                // FIXED: Now accurately utilizes _stride for row-wise vertical spacing jumps
-                return Data[row * _stride + col];
+                return Buffer[Offset + row * _stride + col];
             }
             set
             {
-                if (Rank != 2) throw new ArgumentException("Tensor must be a matrix.");
+                if (Rank != 2) 
+                    throw new ArgumentException($"Tensor must be Rank 2 (current rank: {Rank}).");
                 if (row < 0 || row >= _rows || col < 0 || col >= _cols) 
-                    throw new IndexOutOfRangeException("Row or column index out of range.");
+                    throw new IndexOutOfRangeException($"Index [{row}, {col}] out of bounds for shape [{_rows}, {_cols}].");
                 
-                Data[row * _stride + col] = value;
+                Buffer[Offset + row * _stride + col] = value;
             }
         }
 
-        // Vector indexer
+        // Vector indexer (1D)
         public override float this[int index]
         {
             get
             {
-                if (Rank != 1) throw new ArgumentException("Tensor must be a vector.");
-                if (index < 0 || index >= Data.Length) throw new IndexOutOfRangeException("Index out of range.");
-                return Data[index];
+                if (Rank != 1) 
+                    throw new ArgumentException($"Tensor must be Rank 1 (current rank: {Rank}).");
+                if (index < 0 || index >= _cols) 
+                    throw new IndexOutOfRangeException($"Index [{index}] out of bounds for vector of length {_cols}.");
+                
+                return Buffer[Offset + index];
             }
             set
             {
-                if (Rank != 1) throw new ArgumentException("Tensor must be a vector.");
-                if (index < 0 || index >= Data.Length) throw new IndexOutOfRangeException("Index out of range.");
-                Data[index] = value;
+                if (Rank != 1) 
+                    throw new ArgumentException($"Tensor must be Rank 1 (current rank: {Rank}).");
+                if (index < 0 || index >= _cols) 
+                    throw new IndexOutOfRangeException($"Index [{index}] out of bounds for vector of length {_cols}.");
+                
+                Buffer[Offset + index] = value;
             }
         }
 

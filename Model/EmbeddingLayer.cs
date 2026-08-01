@@ -1,3 +1,5 @@
+using System;
+using System.Collections.Generic;
 using SimpleTransformer.Model.Extensions;
 using SimpleTransformer.Model.Extensions.Numerics;
 
@@ -9,10 +11,16 @@ namespace SimpleTransformer.Model
         private readonly int _embeddingSize;
         private readonly Tensor _embeddings;
         private readonly Tensor _embeddingGradient;
-        public IEnumerable<TrainableParameter> Parameters => _parameters;
+        
         private readonly TrainableParameter[] _parameters;
+        public IEnumerable<TrainableParameter> Parameters => _parameters;
+
         private TensorBase? _lastInput;
+        private TensorBase? _cachedOutput;
+        private TensorBase? _cachedInputGradient;
+        
         private readonly Random _random = new();
+
         public EmbeddingLayer(int vocabSize, int embeddingSize)
         {
             _vocabSize = vocabSize;
@@ -27,136 +35,142 @@ namespace SimpleTransformer.Model
 
             InitEmbeddings();
         }
+
         private void InitEmbeddings()
         {
             float limit = MathF.Sqrt(6f / (_vocabSize + _embeddingSize));
-            for (int i = 0; i < _embeddings.Data.Length; i++)
+            Span<float> data = _embeddings.Data.AsSpan();
+            
+            for (int i = 0; i < data.Length; i++)
             {
-                _embeddings.Data[i] = (float)_random.NextDouble() * 2 * limit - limit;
+                data[i] = (float)_random.NextDouble() * 2f * limit - limit;
             }
         }
+
         public TensorBase Forward(TensorBase input)
         {
+            // Ensure embeddings table hasn't been poisoned by the previous optimizer step
+            if (float.IsNaN(_embeddings.Data[0]))
+            {
+                throw new InvalidOperationException("Embedding weights contain NaN prior to forward pass. Check optimizer step or learning rate.");
+            }
             if (input.Rank != 1 && input.Rank != 2)
-                throw new ArgumentException(
-                    "Embedding layer expects a rank 1 or rank 2 tensor.");
+                throw new ArgumentException("Embedding layer expects a rank 1 or rank 2 tensor.");
 
             _lastInput = input;
 
-            int batchSize;
-            int sequenceLength;
+            int batchSize = input.Rank == 1 ? 1 : input.Rows;
+            int sequenceLength = input.Rank == 1 ? input.Length : input.Cols;
 
-            if (input.Rank == 1)
+            // Ensure cached workspace buffer fits batch configuration
+            _cachedOutput = input.Rank == 1 
+                ? EnsureShape2D(_cachedOutput, sequenceLength, _embeddingSize)
+                : EnsureShape3D(_cachedOutput, batchSize, sequenceLength, _embeddingSize);
+
+            ReadOnlySpan<float> inputData = input.Data.AsSpan();
+            ReadOnlySpan<float> embeddingData = _embeddings.Data.AsSpan();
+            
+            Span<float> outputData = _cachedOutput.Data.AsSpan();
+
+            int totalTokens = batchSize * sequenceLength;
+
+            for (int i = 0; i < totalTokens; i++)
             {
-                batchSize = 1;
-                sequenceLength = input.Length;
-            }
-            else
-            {
-                batchSize = input.Rows;
-                sequenceLength = input.Cols;
-            }
+                int tokenId = (int)inputData[i];
 
-            TensorBase output =
-                input.Rank == 1
-                    ? new Tensor(sequenceLength, _embeddingSize)
-                    : new Tensor(batchSize, sequenceLength, _embeddingSize);
+                if ((uint)tokenId >= (uint)_vocabSize)
+                    throw new ArgumentOutOfRangeException(nameof(input), $"Token ID {tokenId} out of bounds (0..{_vocabSize - 1}).");
 
-            if (input.Rank == 1)
-            {
-                for (int s = 0; s < sequenceLength; s++)
-                {
-                    int tokenId = (int)input[s];
-
-                    if (tokenId < 0 || tokenId >= _vocabSize)
-                        throw new ArgumentException(
-                            $"Token ID {tokenId} is outside of the vocabulary.");
-
-                    TensorUtilitiesSimd.CopyRow(
-                        _embeddings,
-                        tokenId,
-                        output,
-                        s);
-                }
-            }
-            else
-            {
-                for (int b = 0; b < batchSize; b++)
-                {
-                    for (int s = 0; s < sequenceLength; s++)
-                    {
-                        int tokenId = (int)input[b, s];
-
-                        if (tokenId < 0 || tokenId >= _vocabSize)
-                            throw new ArgumentException(
-                                $"Token ID {tokenId} is outside of the vocabulary. Batch {b}, Sequence {s}. Vocabulary size {_vocabSize}.");
-
-                        TensorUtilitiesSimd.CopyRow(
-                            _embeddings,
-                            tokenId,
-                            output,
-                            b,
-                            s);      // <-- new overload
-                    }
-                }
+                // Direct memory copy using Spans
+                ReadOnlySpan<float> sourceRow = embeddingData.Slice(tokenId * _embeddingSize, _embeddingSize);
+                Span<float> targetRow = outputData.Slice(i * _embeddingSize, _embeddingSize);
+                
+                sourceRow.CopyTo(targetRow);
             }
 
-            return output;
+            return _cachedOutput;
         }
 
         public TensorBase Backward(TensorBase gradient)
         {
+            // Ensure embeddings table hasn't been poisoned by the previous optimizer step
+            if (float.IsNaN(_embeddings.Data[0]))
+            {
+                throw new InvalidOperationException("Embedding weights contain NaN prior to forward pass. Check optimizer step or learning rate.");
+            }
             if (_lastInput == null)
-                throw new InvalidOperationException(
-                    "Last input is null.");
+                throw new InvalidOperationException("Forward pass must be executed prior to Backward pass.");
 
-            if (_lastInput.Rank == 1)
+            ReadOnlySpan<float> inputData = _lastInput.Data.AsSpan();
+            ReadOnlySpan<float> gradData = gradient.Data.AsSpan();
+            Span<float> embGradData = _embeddingGradient.Data.AsSpan();
+
+            int totalTokens = _lastInput.Rank == 1 ? _lastInput.Length : (_lastInput.Rows * _lastInput.Cols);
+
+            // Accumulate gradients back to embedding table
+            for (int i = 0; i < totalTokens; i++)
             {
-                TensorUtilitiesSimd.ValidateTensorShape(
-                    gradient,
-                    _lastInput.Length,
-                    _embeddingSize);
+                int tokenId = (int)inputData[i];
 
-                for (int s = 0; s < _lastInput.Length; s++)
-                {
-                    int tokenId = (int)_lastInput[s];
+                ReadOnlySpan<float> incomingGradRow = gradData.Slice(i * _embeddingSize, _embeddingSize);
+                Span<float> targetGradRow = embGradData.Slice(tokenId * _embeddingSize, _embeddingSize);
 
-                    TensorUtilitiesSimd.AddRowInPlace(
-                        gradient,
-                        s,
-                        _embeddingGradient,
-                        tokenId);
-                }
-
-                return new Tensor(_lastInput.Shape);
+                // Use SIMD accelerated vector addition for gradient accumulation
+                TensorMathSimd.AddInPlace(targetGradRow, incomingGradRow);
             }
 
-            TensorUtilitiesSimd.ValidateTensorShape(
-                gradient,
-                _lastInput.Rows, 
-                _lastInput.Cols, 
-                _embeddingSize);
-
-            for (int b = 0; b < _lastInput.Rows; b++)
-            {
-                for (int s = 0; s < _lastInput.Cols; s++)
-                {
-                    int tokenId = (int)_lastInput[b, s];
-
-                    TensorUtilitiesSimd.AddStackedRowInPlace(
-                        gradient,
-                        b,
-                        s,
-                        _embeddingGradient,
-                        tokenId);
-                }
-            }
-
-            return new Tensor(_lastInput.Shape);
+            // Return cached dummy input gradient tensor (discrete token indices carry no continuous gradient)
+            _cachedInputGradient = EnsureShapeSameLayout(_cachedInputGradient, _lastInput);
+            return _cachedInputGradient;
         }
+        public void ClipGradients(float maxNorm = 1.0f)
+        {
+            Span<float> gradData = _embeddingGradient.Data.AsSpan();
+            
+            float sumSq = 0f;
+            for (int i = 0; i < gradData.Length; i++)
+            {
+                sumSq += gradData[i] * gradData[i];
+            }
+
+            float norm = MathF.Sqrt(sumSq);
+            if (norm > maxNorm)
+            {
+                float scale = maxNorm / (norm + 1e-6f);
+                for (int i = 0; i < gradData.Length; i++)
+                {
+                    gradData[i] *= scale;
+                }
+            }
+        }        
+
         public void ZeroGradients()
         {
-            TensorUtilities.Fill(_embeddingGradient, 0f);            
+            TensorUtilitiesSimd.Fill(_embeddingGradient, 0f);
+        }
+
+        private static TensorBase EnsureShape2D(TensorBase? buffer, int rows, int cols)
+        {
+            if (buffer == null || buffer.Rank != 2 || buffer.Rows != rows || buffer.Cols != cols)
+                return new Tensor(rows, cols);
+
+            return buffer;
+        }
+
+        private static TensorBase EnsureShape3D(TensorBase? buffer, int layers, int rows, int cols)
+        {
+            if (buffer == null || buffer.Rank != 3 || buffer.Layers != layers || buffer.Rows != rows || buffer.Cols != cols)
+                return new Tensor(layers, rows, cols);
+
+            return buffer;
+        }
+
+        private static TensorBase EnsureShapeSameLayout(TensorBase? buffer, TensorBase reference)
+        {
+            if (buffer == null || !buffer.Shape.AsSpan().SequenceEqual(reference.Shape.AsSpan()))
+                return new Tensor(reference.Shape);
+
+            return buffer;
         }
     }
 }

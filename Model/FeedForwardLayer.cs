@@ -66,24 +66,12 @@ namespace SimpleTransformer.Model
 
         private TensorBase ForwardBatch3D(TensorBase input)
         {
-            var forwardWatch = Stopwatch.StartNew();
-            Log.Information("[FeedForwardLayer.Forward3D] Started 3D batch forward propagation...");
-
-            int layers = input.Layers;
-            Tensor output = new Tensor(layers, input.Rows, input.Cols);
-
-            // Parallelize across batch items (layers)
-            Parallel.For(0, layers, b =>
-            {
-                TensorBase inputSlice = TensorUtilitiesSimd.GetLayer(input, b);
-                TensorBase result = Forward2D(inputSlice);
-                TensorUtilitiesSimd.SetLayer(output, b, result);
-            });
-
-            forwardWatch.Stop();
-            Log.Information($"[FeedForwardLayer.Forward3D] Finished batch forward propagation in {forwardWatch.ElapsedMilliseconds} ms.");
-
-            return output;
+            // Pass the 3D batch tensor directly through the child layers
+            // (Assuming child layers handle Rank-3 tensors internally)
+            TensorBase x = _expand.Forward(input);
+            x = _activation.Forward(x);
+            x = _project.Forward(x);
+            return x;
         }
 
         public TensorBase Backward(TensorBase gradient)
@@ -106,17 +94,10 @@ namespace SimpleTransformer.Model
 
         private TensorBase BackwardBatch3D(TensorBase gradient)
         {
-            int layers = gradient.Layers;
-            Tensor output = new Tensor(layers, gradient.Rows, gradient.Cols);
-
-            Parallel.For(0, layers, b =>
-            {
-                TensorBase gradSlice = TensorUtilitiesSimd.GetLayer(gradient, b);
-                TensorBase result = Backward2D(gradSlice);
-                TensorUtilitiesSimd.SetLayer(output, b, result);
-            });
-
-            return output;
+            TensorBase x = _project.Backward(gradient);
+            x = _activation.Backward(x);
+            x = _expand.Backward(x);
+            return x;
         }
 
         public void ZeroGradients()

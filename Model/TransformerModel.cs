@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Serilog;
 using SimpleTransformer.Api.Endpoints.Services;
 using SimpleTransformer.Model.Extensions;
@@ -88,33 +89,72 @@ namespace SimpleTransformer.Model
 
         public (TensorBase logits, TensorBase hiddenState) Forward(TensorBase input)
         {
-            TensorBase x = _embedding.Forward(input);
+            Log.Information("Starting forward pass through the transformer model...");
+            var forwardWatch = Stopwatch.StartNew();
+           
+            _embedding.ZeroGradients();
 
+            DiagonisticUtilities.AssertNoNaN(input, "Input contains NaN.");
+            TensorBase x = _embedding.Forward(input); //Why now is this NaN? <scratch target="head" />
+
+            DiagonisticUtilities.AssertNoNaN(x, "Embedding contains NaN.");
             x = _position.Forward(x);
 
+            DiagonisticUtilities.AssertNoNaN(x, "Positional encoding contains NaN.");
             foreach (var layer in _layers)
             {
+                var layerWatch = Stopwatch.StartNew();
+                var layerIndex = _layers.IndexOf(layer);
                 x = layer.Forward(x);
+                Log.Information($"Forward pass through layer {layerIndex} ({layer.GetType().Name}) completed in {layerWatch.ElapsedMilliseconds} ms.");
+                layerWatch.Stop();
+                DiagonisticUtilities.AssertNoNaN(x, $"Transformer layer {nameof(layer)} contains NaN.");
             }
 
             TensorBase hiddenState = x;
 
+            DiagonisticUtilities.AssertNoNaN(hiddenState, "Hidden state contains NaN.");
+
             TensorBase logits = _outputProjection.Forward(hiddenState);
+
+            DiagonisticUtilities.AssertNoNaN(logits, "Logits contains NaN.");
+
+            forwardWatch.Stop();
+            Log.Information($"Forward pass completed in {forwardWatch.ElapsedMilliseconds} ms.");
 
             return (logits, hiddenState);
         }
 
         public void Backward(TensorBase gradient)
         {
+            Log.Information("Starting backward pass through the transformer model...");
+            var backwardWatch = Stopwatch.StartNew();
+            DiagonisticUtilities.AssertNoNaN(gradient, "Gradient contains NaN.");
+
             gradient = _outputProjection.Backward(gradient);
+            DiagonisticUtilities.AssertNoNaN(gradient, "Gradient after backward pass through output projection contains NaN.");
 
             for (int i = _layers.Count - 1; i >= 0; i--)
             {
+                var thislayer = _layers[i];
+                var layerWatch = Stopwatch.StartNew();
+                
                 gradient = _layers[i].Backward(gradient);
+                layerWatch.Stop();
+                Log.Information($"Backward pass through layer {i} ({thislayer.GetType().Name}) completed in {layerWatch.ElapsedMilliseconds} ms.");
+                DiagonisticUtilities.AssertNoNaN(gradient, $"Gradient after backward pass through layer {i} contains NaN.");
             }
 
             gradient = _position.Backward(gradient);
+            DiagonisticUtilities.AssertNoNaN(gradient, "Gradient after backward pass through positional encoding contains NaN.");
+
             gradient = _embedding.Backward(gradient);
+            DiagonisticUtilities.AssertNoNaN(gradient, "Gradient after backward pass through embedding contains NaN.");
+
+            _embedding.ClipGradients(1.0f);
+
+            backwardWatch.Stop();
+            Log.Information($"Backward pass completed in {backwardWatch.ElapsedMilliseconds} ms.");
         }
 
         public (int[] tokens, TensorBase logits, TensorBase probabilities, TensorBase hiddenState) Predict(TensorBase input)
@@ -209,24 +249,37 @@ namespace SimpleTransformer.Model
         }
 
 
-        public float TrainStep(
-            TensorBase inputs,
-            TensorBase expectedOutputs)
+        public float TrainStep(TensorBase inputs, TensorBase expectedOutputs)
         {
             ZeroGradients();
 
-            //Only want the prediction/logits here for now, so we can ignore the hidden state.
             (TensorBase prediction, _) = Forward(inputs);
 
-            float loss =
-                _loss.Forward(prediction, expectedOutputs);
-
-            TensorBase gradient =
-                _loss.Backward(prediction, expectedOutputs);
+            float loss = _loss.Forward(prediction, expectedOutputs);
+            TensorBase gradient = _loss.Backward(prediction, expectedOutputs);
 
             Backward(gradient);
 
+            // 1. Clip ALL parameter gradients globally
+            ClipGradients(1.0f);
+
+            // 2. Verify no gradients contain NaN before updating weights
+            foreach (var p in Parameters)
+            {
+                if (p.Gradient != null)
+                {
+                    DiagonisticUtilities.AssertNoNaN(p.Gradient, "Gradient contains NaN prior to optimizer step.");
+                }
+            }
+
+            // 3. Step optimizer
             _optimizer.Step(Parameters);
+
+            // 4. Verify no weights became NaN after optimizer step
+            foreach (var p in Parameters)
+            {
+                DiagonisticUtilities.AssertNoNaN(p.Value, "Model weight matrix poisoned by optimizer step.");
+            }
 
             return loss;
         }
@@ -326,5 +379,43 @@ Feed forward size: {Config.FeedForwardSize}");
             Log.Information($"Transformer architecture initialisation completed in {watch.ElapsedMilliseconds}ms."); 
             watch.Stop();
         }
+        public float ClipGradients(float maxNorm = 1.0f)
+        {
+            double sumSquaredNorm = 0.0;
+
+            // 1. Accumulate squared gradients across ALL trainable parameters
+            foreach (var param in Parameters)
+            {
+                if (param.Gradient == null) continue;
+                
+                ReadOnlySpan<float> gData = param.Gradient.Data.AsSpan();
+                for (int i = 0; i < gData.Length; i++)
+                {
+                    float g = gData[i];
+                    sumSquaredNorm += g * g;
+                }
+            }
+
+            float totalNorm = MathF.Sqrt((float)sumSquaredNorm);
+
+            // 2. Scale gradients if global norm exceeds maxNorm
+            if (totalNorm > maxNorm)
+            {
+                float scale = maxNorm / (totalNorm + 1e-6f);
+
+                foreach (var param in Parameters)
+                {
+                    if (param.Gradient == null) continue;
+
+                    Span<float> gData = param.Gradient.Data.AsSpan();
+                    for (int i = 0; i < gData.Length; i++)
+                    {
+                        gData[i] *= scale;
+                    }
+                }
+            }
+
+            return totalNorm;
+        }        
     }
 }

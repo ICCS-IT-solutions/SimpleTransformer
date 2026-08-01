@@ -47,6 +47,99 @@ namespace SimpleTransformer.Model.Extensions.Numerics
             }
         }
 
+        /// <summary>
+        /// Compute softmax on a span of values
+        /// Vectorized using hardware SIMD registers (AVX2 / AVX-512 / NEON).
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static float Max(ReadOnlySpan<float> span)
+        {
+            if (span.IsEmpty) throw new ArgumentException("Unable to compute softmax on an empty span.");
+
+            int len = span.Length;
+            int width = Vector<float>.Count;
+
+            ref float pData = ref MemoryMarshal.GetReference(span);
+            int i = 0;
+
+            if (len >= width)
+            {
+                Vector<float> maxVec = Vector.LoadUnsafe(ref pData, 0);
+                i += width;
+
+                //SIMD loop
+                for (; i <= len - width; i += width)
+                {
+                    Vector<float> v = Vector.LoadUnsafe(ref pData, (uint)i);
+                    maxVec = Vector.Max(maxVec, v);
+                }
+
+                // Horizontal reduction across vector elements
+                float maxVal = maxVec[0];
+                for (int j = 1; j < width; j++)
+                {
+                    if (maxVec[j] > maxVal)
+                        maxVal = maxVec[j];
+                }
+
+                // Cleanup tail elements
+                for (; i < len; i++)
+                {
+                    float val = Unsafe.Add(ref pData, i);
+                    if (val > maxVal)
+                        maxVal = val;
+                }
+
+                return maxVal;                
+            }
+            
+            // Scalar fallback for spans shorter than SIMD vector width
+            float scalarMax = pData;
+            for (i = 1; i < len; i++)
+            {
+                float val = Unsafe.Add(ref pData, i);
+                if (val > scalarMax)
+                    scalarMax = val;
+            }
+
+            return scalarMax;            
+            
+        }
+
+        /// <summary>
+        /// Performs in-place element-wise addition: target[i] += source[i]
+        /// Vectorized using hardware SIMD registers (AVX2 / AVX-512 / NEON).
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static void AddInPlace(Span<float> target, ReadOnlySpan<float> source)
+        {
+            if (target.Length != source.Length)
+                throw new ArgumentException("Span lengths must match for AddInPlace operation.");
+
+            int i = 0;
+            int vectorSize = Vector<float>.Count;
+            int length = target.Length;
+
+            // Process blocks in SIMD vector length (e.g., 8 floats for AVX2)
+            while (i <= length - vectorSize)
+            {
+                // Vector load from target and source spans
+                var targetVec = new Vector<float>(target.Slice(i, vectorSize));
+                var sourceVec = new Vector<float>(source.Slice(i, vectorSize));
+
+                // SIMD addition & store back to target
+                (targetVec + sourceVec).CopyTo(target.Slice(i, vectorSize));
+
+                i += vectorSize;
+            }
+
+            // Scalar fallback loop for remaining elements (tail end)
+            for (; i < length; i++)
+            {
+                target[i] += source[i];
+            }
+        }
+
         public static void ElementWiseAddInPlace(TensorBase a, TensorBase b)
         {
             // 1. Maintain shape validation
@@ -144,11 +237,27 @@ namespace SimpleTransformer.Model.Extensions.Numerics
         #endregion
 
         #region Matrix ops
+
+        //New entry point for matrix multiplication that handles both Rank 2 and Rank 3 tensors
+        public static void MatMul(
+            TensorBase a, TensorBase b, TensorBase result, 
+            bool transposeA = false, bool transposeB = false)
+        {
+            // If input A is Rank 3, route directly to native Batch GEMM
+            if (a.Rank == 3)
+            {
+                BatchMatrixMultiply(a, b, result, transposeA, transposeB);
+                return;
+            }
+
+            // Rank 2 fallback (your existing MatrixMultiplyRowByRow implementation)
+            MatrixMultiplyRowByRow(a, b, result, transposeA, transposeB);
+        }
         //No transposes
         public static Tensor MatrixMultiply(TensorBase a, TensorBase b)
         {
             Tensor result = new Tensor(a.Rows, b.Cols);
-            MatrixMultiplyRowByRow(a, b, result, transposeA: false, transposeB: false);
+            MatMul(a, b, result, transposeA: false, transposeB: false);
             return result;
         }
         // Right Transposed: A * B^T
@@ -157,7 +266,7 @@ namespace SimpleTransformer.Model.Extensions.Numerics
             // Logical result dimensions for A (m x k) * B^T (k x n) => (m x n)
             // B has physical shape (n x k), so B^T logical cols = B.Rows
             Tensor result = new Tensor(a.Rows, b.Rows);
-            MatrixMultiplyRowByRow(a, b, result, transposeA: false, transposeB: true);
+            MatMul(a, b, result, transposeA: false, transposeB: true);
             return result;
         }
 
@@ -167,34 +276,34 @@ namespace SimpleTransformer.Model.Extensions.Numerics
             // Logical result dimensions for A^T (m x k) * B (k x n) => (m x n)
             // A has physical shape (k x m), so A^T logical rows = A.Cols
             Tensor result = new Tensor(a.Cols, b.Cols);
-            MatrixMultiplyRowByRow(a, b, result, transposeA: true, transposeB: false);
+            MatMul(a, b, result, transposeA: true, transposeB: false);
             return result;
         }
         // Both Transposed: A^T * B^T
         public static Tensor MatrixMultiplyBothTransposed(TensorBase a, TensorBase b)
         {
             Tensor result = new Tensor(a.Cols, b.Rows);
-            MatrixMultiplyRowByRow(a, b, result, transposeA: true, transposeB: true);
+            MatMul(a, b, result, transposeA: true, transposeB: true);
             return result;
         }        
 
         // No transposes -> stores into result
         public static void MatrixMultiplyInto(TensorBase a, TensorBase b, TensorBase result) 
-            => MatrixMultiplyRowByRow(a, b, result, transposeA: false, transposeB: false);
+            => MatMul(a, b, result, transposeA: false, transposeB: false);
 
         // Right transposed -> stores into result
         public static void MatrixMultiplyRightTransposedInto(TensorBase a, TensorBase b, TensorBase result) 
-            => MatrixMultiplyRowByRow(a, b, result, transposeA: false, transposeB: true);
+            => MatMul(a, b, result, transposeA: false, transposeB: true);
 
         // Left transposed -> stores into result
         public static void MatrixMultiplyLeftTransposedInto(TensorBase a, TensorBase b, TensorBase result) 
-            => MatrixMultiplyRowByRow(a, b, result, transposeA: true, transposeB: false);
+            => MatMul(a, b, result, transposeA: true, transposeB: false);
 
         // Both transposed -> stores into result
         public static void MatrixMultiplyBothTransposedInto(TensorBase a, TensorBase b, TensorBase result) 
-            => MatrixMultiplyRowByRow(a, b, result, transposeA: true, transposeB: true);
+            => MatMul(a, b, result, transposeA: true, transposeB: true);
 
-       private static void MatrixMultiplyRowByRow(
+        private static void MatrixMultiplyRowByRow(
             TensorBase a, TensorBase b, TensorBase result, 
             bool transposeA = false, bool transposeB = false)
         {
@@ -293,6 +402,114 @@ namespace SimpleTransformer.Model.Extensions.Numerics
             }
         }
 
+        public static void BatchMatrixMultiply(
+            TensorBase a, TensorBase b, TensorBase result,
+            bool transposeA = false, bool transposeB = false)
+        {
+            // 1. Rank validation: A can be Rank 3, B can be Rank 2 (shared weights) or Rank 3
+            if (a.Rank != 3)
+                throw new ArgumentException($"Batch matrix multiplication expects A to be Rank 3 [Batch, Rows, Cols]. Got {a.Rank}");
+
+            int batchSize = a.Layers;
+            
+            int aRows = transposeA ? a.Cols : a.Rows;
+            int aCols = transposeA ? a.Rows : a.Cols;
+            int bRows = transposeB ? b.Cols : b.Rows;
+            int bCols = transposeB ? b.Rows : b.Cols;
+
+            if (aCols != bRows)
+                throw new ArgumentException($"Shape mismatch: A({aRows}x{aCols}) vs B({bRows}x{bCols})");
+
+            // 2. Compute contiguous batch stride offsets
+            int aBatchStride = a.Rows * a.Cols;
+            int bBatchStride = b.Rank == 3 ? (b.Rows * b.Cols) : 0; // 0 if B is a shared 2D weight matrix
+            int resultBatchStride = result.Rows * result.Cols;
+
+            // 3. Parallelize across the Batch dimension (B)
+            Parallel.For(0, batchSize, batchIdx =>
+            {
+                // Extract lightweight 2D slice views without copying underlying buffers
+                int aOffset = a.Offset + (batchIdx * aBatchStride);
+                int bOffset = b.Offset + (batchIdx * bBatchStride);
+                int resultOffset = result.Offset + (batchIdx * resultBatchStride);
+
+                // Execute 2D matrix multiplication on the slice offsets
+                MatrixMultiply2DSlice(
+                    a.Buffer, aOffset, aRows, aCols, a.Cols, transposeA,
+                    b.Buffer, bOffset, bRows, bCols, b.Cols, transposeB,
+                    result.Buffer, resultOffset, result.Rows, result.Cols);
+            });
+        }
+
+        private static void MatrixMultiply2DSlice(
+            float[] arrayA, int offsetA, int aRows, int aCols, int aColsPhysical, bool transposeA,
+            float[] arrayB, int offsetB, int bRows, int bCols, int bColsPhysical, bool transposeB,
+            float[] arrayResult, int offsetResult, int resRows, int resCols)
+        {
+            int m = aRows;
+            int n = bCols;
+            int k = aCols;
+
+            ReadOnlySpan<float> spanA = arrayA.AsSpan(offsetA);
+            ReadOnlySpan<float> spanB = arrayB.AsSpan(offsetB);
+            Span<float> spanResult = arrayResult.AsSpan(offsetResult, m * n);
+
+            Span<float> tempBufferA = stackalloc float[k];
+            Span<float> tempBufferB = stackalloc float[k];
+
+            for (int i = 0; i < m; i++)
+            {
+                int resultRowOffset = i * n;
+
+                if (!transposeA)
+                {
+                    // Direct slice without stackalloc assignment
+                    ReadOnlySpan<float> rowA = spanA.Slice(i * aColsPhysical, k);
+                    ComputeRowOutput(rowA, spanB, spanResult, resultRowOffset, tempBufferB, n, k, bColsPhysical, transposeB);
+                }
+                else
+                {
+                    // Fill local buffer and pass directly
+                    for (int e = 0; e < k; e++)
+                    {
+                        tempBufferA[e] = spanA[e * aColsPhysical + i];
+                    }
+                    ComputeRowOutput(tempBufferA, spanB, spanResult, resultRowOffset, tempBufferB, n, k, bColsPhysical, transposeB);
+                }
+            }
+
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            static void ComputeRowOutput(
+                ReadOnlySpan<float> rowA,
+                ReadOnlySpan<float> spanB,
+                Span<float> spanResult,
+                int resultRowOffset,
+                Span<float> tempBufferB,
+                int n, int k, int bColsPhysical,
+                bool transposeB)
+            {
+                if (transposeB)
+                {
+                    for (int j = 0; j < n; j++)
+                    {
+                        ReadOnlySpan<float> rowB = spanB.Slice(j * k, k);
+                        spanResult[resultRowOffset + j] = DotSimd(rowA, rowB);
+                    }
+                }
+                else
+                {
+                    for (int j = 0; j < n; j++)
+                    {
+                        for (int e = 0; e < k; e++)
+                        {
+                            tempBufferB[e] = spanB[e * bColsPhysical + j];
+                        }
+                        spanResult[resultRowOffset + j] = DotSimd(rowA, tempBufferB);
+                    }
+                }
+            }
+        }       
+
         private static float DotSimd(ReadOnlySpan<float> a, ReadOnlySpan<float> b)
         {
             // 1. Validate early (remains identical)
@@ -327,6 +544,46 @@ namespace SimpleTransformer.Model.Extensions.Numerics
             }
 
             return result;
+        }
+        #endregion
+
+        #region Multiple tensor operations
+        public static void AddThreeTensors(TensorBase a, TensorBase b, TensorBase c, TensorBase target)
+        {
+            if (a.IsContiguous && b.IsContiguous && c.IsContiguous && target.IsContiguous)
+            {
+                ReadOnlySpan<float> spanA = a.ReadOnlySpan;
+                ReadOnlySpan<float> spanB = b.ReadOnlySpan;
+                ReadOnlySpan<float> spanC = c.ReadOnlySpan;
+                Span<float> spanDst = target.Span;
+
+                int length = spanDst.Length;
+                int vectorSize = Vector<float>.Count;
+                int i = 0;
+
+                for (; i <= length - vectorSize; i += vectorSize)
+                {
+                    var vA = new Vector<float>(spanA.Slice(i, vectorSize));
+                    var vB = new Vector<float>(spanB.Slice(i, vectorSize));
+                    var vC = new Vector<float>(spanC.Slice(i, vectorSize));
+
+                    (vA + vB + vC).CopyTo(spanDst.Slice(i, vectorSize));
+                }
+
+                for (; i < length; i++)
+                {
+                    spanDst[i] = spanA[i] + spanB[i] + spanC[i];
+                }
+            }
+            else
+            {
+                // Fallback for non-contiguous views/slices
+                int totalElements = a.Length;
+                for (int i = 0; i < totalElements; i++)
+                {
+                    target[i] = a[i] + b[i] + c[i];
+                }
+            }
         }
         #endregion
         

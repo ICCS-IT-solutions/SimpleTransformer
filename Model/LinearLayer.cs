@@ -59,7 +59,7 @@ namespace SimpleTransformer.Model
         {
             float limit = MathF.Sqrt(6.0f / (_inputSize + _outputSize));
 
-            TensorUtilities.FillRandom(
+            TensorUtilitiesSimd.FillRandom(
                 _weights,
                 _random,
                 -limit,
@@ -206,10 +206,10 @@ namespace SimpleTransformer.Model
 
         public void ZeroGradients()
         {
-            TensorUtilities.Fill(_weightGradient, 0f);
+            TensorUtilitiesSimd.Fill(_weightGradient, 0f);
             if (_useBias)
             {
-                TensorUtilities.Fill(_biasGradient!, 0f);
+                TensorUtilitiesSimd.Fill(_biasGradient!, 0f);
             }
         }
 

@@ -89,6 +89,45 @@ namespace SimpleTransformer.Model.Extensions.Numerics
             CopyTo(src, dst);
         }
 
+        public static void CopyBlock(
+            TensorBase source, 
+            int startColSource, 
+            TensorBase target, 
+            int startColTarget, 
+            int rowCount, 
+            int colCount)
+        {
+            if (startColSource + colCount > source.Cols)
+                throw new ArgumentOutOfRangeException(nameof(startColSource), "Source column bounds exceeded.");
+            
+            if (startColTarget + colCount > target.Cols)
+                throw new ArgumentOutOfRangeException(nameof(startColTarget), "Target column bounds exceeded.");
+
+            if (rowCount > source.Rows || rowCount > target.Rows)
+                throw new ArgumentOutOfRangeException(nameof(rowCount), "Row bounds exceeded.");
+
+            float[] srcData = source.Data;
+            float[] dstData = target.Data;
+
+            int srcStride = source.Stride;
+            int dstStride = target.Stride;
+
+            int srcOffset = source.Offset + startColSource;
+            int dstOffset = target.Offset + startColTarget;
+
+            // Copy row by row using high-performance Span block copies (Buffer.MemoryCopy / Vectorized under the hood)
+            for (int r = 0; r < rowCount; r++)
+            {
+                int srcRowStart = srcOffset + r * srcStride;
+                int dstRowStart = dstOffset + r * dstStride;
+
+                ReadOnlySpan<float> srcSpan = srcData.AsSpan(srcRowStart, colCount);
+                Span<float> dstSpan = dstData.AsSpan(dstRowStart, colCount);
+
+                srcSpan.CopyTo(dstSpan);
+            }
+        }        
+
         // 2. OPTIMISED: Polymorphic 3D Stacked Matrix Validator with JIT Inlining
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static void ValidateTensorShape(TensorBase tensor, int layers, int rows, int cols)
@@ -441,14 +480,12 @@ namespace SimpleTransformer.Model.Extensions.Numerics
                 vmax = Vector.Max(vmax, v);
             }
 
-            // Hardware-accelerated horizontal maximum reduction
             float max = vmax[0];
             for (int j = 1; j < width; j++)
             {
                 if (vmax[j] > max) max = vmax[j];
             }
 
-            // Scalar cleanup path for max
             for (; i < len; i++)
             {
                 float val = Unsafe.Add(ref pValues, i);
@@ -461,53 +498,57 @@ namespace SimpleTransformer.Model.Extensions.Numerics
             Vector<float> vMax = new Vector<float>(max);
             Vector<float> vSum = Vector<float>.Zero;
 
-            // SIMD Tanh/Exp Constants
             Vector<float> vOne = Vector<float>.One;
             Vector<float> vHalf = new Vector<float>(0.5f);
-            Vector<float> vInvLn2 = new Vector<float>(1.4426950408f); // 1/ln(2)
-            Vector<float> vLn2 = new Vector<float>(0.69314718056f);   // ln(2)
+            Vector<float> vInvLn2 = new Vector<float>(1.4426950408f);
+            Vector<float> vLn2 = new Vector<float>(0.69314718056f);
+            
+            // Guard clamp against integer bit-shift underflow in float exponent bounds
+            Vector<float> vMinExpBound = new Vector<float>(-87.0f);
 
             i = 0;
             for (; i <= len - width; i += width)
             {
-                Vector<float> x = Vector.LoadUnsafe(ref pValues, (uint)i) - vMax;
-
-                // --- Fast SIMD Vectorized Exp(x) Approximation ---
-                // Uses the property: e^x = 2^(x * log2(e))
-                Vector<float> fx = Vector.Round(x * vInvLn2);
-                Vector<float> px = x - (fx * vLn2); // Remainder
+                Vector<float> rawX = Vector.LoadUnsafe(ref pValues, (uint)i) - vMax;
                 
-                // Taylor polynomial approximation for e^px when px is close to 0
+                // Clamp lower bound so (x - max) never causes negative exponent bit-shift corruption
+                Vector<float> x = Vector.Max(rawX, vMinExpBound);
+
+                Vector<float> fx = Vector.Round(x * vInvLn2);
+                Vector<float> px = x - (fx * vLn2);
+                
                 Vector<float> expPx = vOne + px + (px * px * vHalf) + (px * px * px * new Vector<float>(0.16666667f));
                 
-                // Convert the rounded floating point power of 2 into integer bit-shifts
-                // This calculates 2^fx directly inside the SIMD lanes
                 Vector<int> k = Vector.ConvertToInt32(fx);
                 Vector<int> biasedK = k + new Vector<int>(127);
-                Vector<float> pow2 = Vector.AsVectorSingle(Vector.ShiftLeft(biasedK, 23));
                 
-                Vector<float> expX = expPx * pow2;
-                // -------------------------------------------------
+                // Zero out lanes where biasedK <= 0 to prevent shift-left on negative integers
+                Vector<int> zeroMask = Vector.GreaterThan(biasedK, Vector<int>.Zero);
+                Vector<int> safeBiasedK = Vector.ConditionalSelect(zeroMask, biasedK, Vector<int>.Zero);
+                
+                Vector<float> pow2 = Vector.AsVectorSingle(Vector.ShiftLeft(safeBiasedK, 23));
+                Vector<float> expX = Vector.ConditionalSelect(Vector.GreaterThan(x, vMinExpBound), expPx * pow2, Vector<float>.Zero);
 
                 vSum += expX;
                 Vector.StoreUnsafe(expX, ref pValues, (uint)i);
             }
 
-            // Horizontal vector sum using hardware-accelerated Dot product
             float sum = Vector.Dot(vSum, Vector<float>.One);
 
-            // Scalar cleanup path for Exp + Sum
             for (; i < len; i++)
             {
                 ref float vRef = ref Unsafe.Add(ref pValues, i);
-                vRef = MathF.Exp(vRef - max);
+                float diff = vRef - max;
+                vRef = diff < -87.0f ? 0.0f : MathF.Exp(diff);
                 sum += vRef;
             }
 
             // -----------------------------------------------------------------
             // Phase 3: Normalize (SIMD)
             // -----------------------------------------------------------------
-            Vector<float> invSum = new Vector<float>(1f / sum);
+            // Epsilon guard prevents 0 / 0 NaN if an entire row is masked out
+            float invSumVal = sum > 1e-12f ? (1.0f / sum) : 0.0f;
+            Vector<float> invSum = new Vector<float>(invSumVal);
 
             i = 0;
             for (; i <= len - width; i += width)
@@ -518,69 +559,10 @@ namespace SimpleTransformer.Model.Extensions.Numerics
 
             for (; i < len; i++)
             {
-                Unsafe.Add(ref pValues, i) /= sum;
+                Unsafe.Add(ref pValues, i) *= invSumVal;
             }
-        }        
-        /*
-        private static void SoftmaxInPlace(Span<float> values)
-        {
-            if (values.Length == 0)
-                throw new ArgumentException();
+        }       
 
-            int width = Vector<float>.Count;
-
-            //-----------------------------------------
-            // Find max
-            //-----------------------------------------
-
-            int i = 0;
-
-            Vector<float> vmax = new(values);
-
-            for (i = width; i <= values.Length - width; i += width)
-            {
-                var v = new Vector<float>(values.Slice(i));
-                vmax = Vector.Max(vmax, v);
-            }
-
-            float max = vmax[0];
-
-            for (int j = 1; j < width; j++)
-                if (vmax[j] > max)
-                    max = vmax[j];
-
-            for (; i < values.Length; i++)
-                if (values[i] > max)
-                    max = values[i];
-
-            //-----------------------------------------
-            // Exp + Sum
-            //-----------------------------------------
-
-            float sum = 0f;
-
-            for (i = 0; i < values.Length; i++)
-            {
-                values[i] = MathF.Exp(values[i] - max);
-                sum += values[i];
-            }
-
-            //-----------------------------------------
-            // Normalize
-            //-----------------------------------------
-
-            Vector<float> invSum = new(1f / sum);
-
-            for (i = 0; i <= values.Length - width; i += width)
-            {
-                var v = new Vector<float>(values.Slice(i));
-                (v * invSum).CopyTo(values.Slice(i));
-            }
-
-            for (; i < values.Length; i++)
-                values[i] /= sum;
-        }
-        */
         public static void SoftmaxBackwardInto(
             Tensor outputGradient,
             Tensor softmaxOutput,
@@ -589,11 +571,12 @@ namespace SimpleTransformer.Model.Extensions.Numerics
             ValidateSameShape(outputGradient, softmaxOutput);
             ValidateSameShape(outputGradient, inputGradient);
 
+            // FIXED: Parameter order matched to target signature (softmaxOutput first, then outputGradient)
             SoftmaxBackwardRows(
                 softmaxOutput,
                 outputGradient,
                 inputGradient);
-        }        
+        }       
         public static void SoftmaxBackwardRows(
             Tensor softmaxOutput,
             Tensor outputGradient,
@@ -697,61 +680,7 @@ namespace SimpleTransformer.Model.Extensions.Numerics
                     Unsafe.Add(ref pSoft, i) * (Unsafe.Add(ref pGrad, i) - dot);
             }
         }        
-        /*
-        private static void SoftmaxBackwardInPlace(
-            ReadOnlySpan<float> softmaxOutput,
-            ReadOnlySpan<float> outputGradient,
-            Span<float> inputGradient)
-        {
-            if (softmaxOutput.Length != outputGradient.Length)
-                throw new ArgumentException();
-
-            if (softmaxOutput.Length != inputGradient.Length)
-                throw new ArgumentException();
-
-            int width = Vector<float>.Count;
-
-            Vector<float> dotVec = Vector<float>.Zero;
-
-            int i = 0;
-
-            for (; i <= softmaxOutput.Length - width; i += width)
-            {
-                var soft = new Vector<float>(softmaxOutput.Slice(i));
-                var grad = new Vector<float>(outputGradient.Slice(i));
-
-                dotVec += grad * soft;
-            }
-
-            float dot = 0f;
-
-            for (int j = 0; j < width; j++)
-                dot += dotVec[j];
-
-            for (; i < softmaxOutput.Length; i++)
-                dot += outputGradient[i] * softmaxOutput[i];
-
-            Vector<float> dotVector = new(dot);
-
-            i = 0;
-
-            for (; i <= softmaxOutput.Length - width; i += width)
-            {
-                var soft = new Vector<float>(softmaxOutput.Slice(i));
-                var grad = new Vector<float>(outputGradient.Slice(i));
-
-                (soft * (grad - dotVector))
-                    .CopyTo(inputGradient.Slice(i));
-            }
-
-            for (; i < softmaxOutput.Length; i++)
-            {
-                inputGradient[i] =
-                    softmaxOutput[i] *
-                    (outputGradient[i] - dot);
-            }
-        } 
-        */
+        
         #endregion
 
         #region Row, Column and Layer ops -- uses TensorView for improved performance
@@ -856,39 +785,101 @@ namespace SimpleTransformer.Model.Extensions.Numerics
             });
         }        
 
-        // public static void TransposeInto(
-        //     TensorBase source,
-        //     TensorBase destination)
-        // {
-        //     if (source.Rank != 2)
-        //         throw new ArgumentException("Source must be a matrix.");
+        /// <summary>
+        /// Fills a TensorBase target with a single scalar value.
+        /// Fast-path uses System.Memory/Span or Array.Fill for contiguous tensors;
+        /// falls back to offset/stride iteration for non-contiguous views.
+        /// </summary>
+        public static void Fill(TensorBase tensor, float value)
+        {
+            // Fast path: Tensor is completely contiguous in memory
+            if (tensor.IsContiguous)
+            {
+                Span<float> span = tensor.Data.AsSpan(tensor.Offset, tensor.Length);
+                span.Fill(value);
+                return;
+            }
 
-        //     if (destination.Rank != 2)
-        //         throw new ArgumentException("Destination must be a matrix.");
+            // General path: Multi-dimensional / non-contiguous slice
+            FillNonContiguous(tensor, value);
+        }
 
-        //     if (destination.Rows != source.Cols ||
-        //         destination.Cols != source.Rows)
-        //     {
-        //         throw new ArgumentException(
-        //             $"Destination must be {source.Cols}x{source.Rows}.");
-        //     }
+        /// <summary>
+        /// Fills a TensorBase target with random values in the range [min, max).
+        /// Direct Span indexing eliminates indexer overhead.
+        /// </summary>
+        public static void FillRandom(TensorBase tensor, Random rnd, float min = -0.1f, float max = 0.1f)
+        {
+            if (min >= max) 
+                throw new ArgumentException("Minimum must be less than maximum.");
 
-        //     ReadOnlySpan<float> src = source.ReadOnlySpan;
-        //     Span<float> dst = destination.Span;
+            float range = max - min;
+            float[] data = tensor.Data;
 
-        //     int rows = source.Rows;
-        //     int cols = source.Cols;
+            // Fast path: Contiguous memory segment
+            if (tensor.IsContiguous)
+            {
+                int start = tensor.Offset;
+                int end = start + tensor.Length;
 
-        //     for (int r = 0; r < rows; r++)
-        //     {
-        //         int srcRow = r * cols;
+                for (int i = start; i < end; i++)
+                {
+                    data[i] = (float)rnd.NextDouble() * range + min;
+                }
+                return;
+            }
 
-        //         for (int c = 0; c < cols; c++)
-        //         {
-        //             dst[c * rows + r] = src[srcRow + c];
-        //         }
-        //     }
-        // }       
+            // General path: Non-contiguous view / slice
+            FillRandomNonContiguous(tensor, rnd, min, range);
+        }
+
+        #region Helper Methods for Slices
+
+        private static void FillNonContiguous(TensorBase tensor, float value)
+        {
+            int layers = tensor.Rank == 3 ? tensor.Layers : 1;
+            int rows = tensor.Rows;
+            int cols = tensor.Cols;
+            float[] data = tensor.Data;
+
+            for (int l = 0; l < layers; l++)
+            {
+                // Uses LayerStride (Rows * Stride) for correct 3D layer stepping
+                int layerOffset = tensor.Offset + l * tensor.LayerStride;
+                for (int r = 0; r < rows; r++)
+                {
+                    int rowOffset = layerOffset + r * tensor.Stride;
+                    data.AsSpan(rowOffset, cols).Fill(value);
+                }
+            }
+        }
+
+        private static void FillRandomNonContiguous(TensorBase tensor, Random rnd, float min, float range)
+        {
+            int layers = tensor.Rank == 3 ? tensor.Layers : 1;
+            int rows = tensor.Rows;
+            int cols = tensor.Cols;
+            float[] data = tensor.Data;
+
+            for (int l = 0; l < layers; l++)
+            {
+                int layerOffset = tensor.Offset + l * tensor.LayerStride;
+                for (int r = 0; r < rows; r++)
+                {
+                    int rowOffset = layerOffset + r * tensor.Stride;
+                    int end = rowOffset + cols;
+
+                    for (int c = rowOffset; c < end; c++)
+                    {
+                        data[c] = (float)rnd.NextDouble() * range + min;
+                    }
+                }
+            }
+        }
+
+        #endregion
+
+      
         public static TensorBase GetRow(TensorBase source, int row)
         {
             if (source.Rank != 2)

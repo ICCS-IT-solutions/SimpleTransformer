@@ -1,5 +1,5 @@
-using System.Diagnostics;
-using System.Threading.Tasks;
+using System;
+using System.Collections.Generic;
 using Serilog;
 using SimpleTransformer.Model.Extensions;
 using SimpleTransformer.Model.Extensions.Numerics;
@@ -9,8 +9,9 @@ namespace SimpleTransformer.Model
     public class MultiHeadAttention : ITrainableLayer
     {
         private readonly AttentionHead[] _heads;
-        private readonly TensorBase[] _headGradientBuffers;
         private readonly LinearLayer _outputProjection;
+        private readonly int _embeddingSize;
+        private readonly int _headSize;
 
         public IEnumerable<TrainableParameter> Parameters
         {
@@ -32,14 +33,13 @@ namespace SimpleTransformer.Model
             if (embeddingSize % numHeads != 0) 
                 throw new ArgumentException("Embedding size must be divisible by number of heads.");
 
-            int headSize = embeddingSize / numHeads;
+            _embeddingSize = embeddingSize;
+            _headSize = embeddingSize / numHeads;
             _heads = new AttentionHead[numHeads];
-            _headGradientBuffers = new Tensor[numHeads];
 
             for (int i = 0; i < numHeads; i++)
             {
-                _heads[i] = new AttentionHead(embeddingSize, headSize);
-                _headGradientBuffers[i] = new Tensor(1, headSize);
+                _heads[i] = new AttentionHead(embeddingSize, _headSize);
             }
 
             _outputProjection = new LinearLayer(embeddingSize, embeddingSize);
@@ -59,57 +59,46 @@ namespace SimpleTransformer.Model
 
         private TensorBase ForwardSequence(TensorBase input, TensorBase? mask = null)
         {
-            int numHeads = _heads.Length;
-            var headOutputs = new TensorBase[numHeads];
+            int rows = input.Rows;
+            Tensor concatenated = new Tensor(rows, _embeddingSize);
 
-            // 1. Parallelize individual head evaluations across CPU worker threads
-            Parallel.For(0, numHeads, i =>
-            {
-                headOutputs[i] = _heads[i].Forward(input, mask);
-            });
-
-            // 2. Concatenate head outputs along column dimension
-            TensorBase concatenated = TensorUtilitiesSimd.ConcatenateColumns(headOutputs);
+            ComputeForwardSequenceInternal(input, mask, concatenated);
 
             return _outputProjection.Forward(concatenated);
         }
 
         private TensorBase ForwardBatch(TensorBase input, TensorBase? mask)
         {
-            var batchWatch = Stopwatch.StartNew(); 
-            Log.Information($"[MultiHeadAttention.ForwardBatch] Started forward propagation...");
-
             int layers = input.Layers;
-            Tensor output = new Tensor(layers, input.Rows, input.Cols);
+            int rows = input.Rows;
 
-            // 3. Parallelize across batch items (layers)
-            Parallel.For(0, layers, b =>
+            Tensor concatenatedBatch = new Tensor(layers, rows, _embeddingSize);
+
+            // Process batch items sequentially to ensure shared AttentionHead state is never mutated concurrently
+            for (int b = 0; b < layers; b++)
             {
-                var layerWatch = Stopwatch.StartNew();
-                Log.Information($"[MultiHeadAttention.ForwardBatch] Forwarding layer {b}...");
-
                 TensorBase inputSlice = TensorUtilitiesSimd.GetLayer(input, b);
                 TensorBase? maskSlice = mask != null ? TensorUtilitiesSimd.GetLayer(mask, b) : null;
+                TensorBase concatSlice = TensorUtilitiesSimd.GetLayer(concatenatedBatch, b);
 
-                TensorBase result = ForwardSequence(inputSlice, maskSlice);
+                ComputeForwardSequenceInternal(inputSlice, maskSlice, concatSlice);
+            }
 
-                TensorUtilitiesSimd.SetLayer(output, b, result);
-
-                layerWatch.Stop();
-                Log.Information($"[MultiHeadAttention.ForwardBatch] Finished layer {b} in {layerWatch.ElapsedMilliseconds} ms.");
-            });
-
-            batchWatch.Stop();
-            Log.Information($"[MultiHeadAttention.ForwardBatch] Finished forward propagation in {batchWatch.ElapsedMilliseconds} ms.");
-            return output;
+            return _outputProjection.Forward(concatenatedBatch);
         }
 
-        public void ZeroGradients()
+        private void ComputeForwardSequenceInternal(TensorBase input, TensorBase? mask, TensorBase targetConcat)
         {
-            foreach (var head in _heads)
-                head.ZeroGradients();
+            int numHeads = _heads.Length;
+            int rows = input.Rows;
 
-            _outputProjection.ZeroGradients();
+            for (int i = 0; i < numHeads; i++)
+            {
+                TensorBase headOutput = _heads[i].Forward(input, mask);
+                
+                int startCol = i * _headSize;
+                TensorUtilitiesSimd.CopyBlock(headOutput, 0, targetConcat, startCol, rows, _headSize);
+            }
         }
 
         public TensorBase Backward(TensorBase gradient)
@@ -118,50 +107,65 @@ namespace SimpleTransformer.Model
             {
                 2 => BackwardSequence(gradient),
                 3 => BackwardBatch(gradient),
-                _ => throw new ArgumentException("Input must be rank 2 or rank 3.")
+                _ => throw new ArgumentException("Gradient must be rank 2 or rank 3.")
             };
         }
 
         private TensorBase BackwardSequence(TensorBase gradient)
         {
             TensorBase dConcat = _outputProjection.Backward(gradient);
+            Tensor inputGradient = new Tensor(dConcat.Rows, _embeddingSize);
 
-            int headsLength = _heads.Length;
-            int headSize = dConcat.Cols / headsLength;
-
-            var inputGradient = new Tensor(dConcat.Rows, dConcat.Cols);
-            object lockObj = new object();
-
-            // Parallelize head backward passes safely
-            Parallel.For(0, headsLength, i =>
-            {
-                int startColumn = i * headSize;
-                TensorView headGradientView = new TensorView(dConcat, startColumn, dConcat.Rows, headSize, dConcat.Stride);
-
-                TensorBase dInput = _heads[i].Backward(headGradientView);
-
-                lock (lockObj)
-                {
-                    TensorMathSimd.ElementWiseAddInPlace(inputGradient, dInput);
-                }
-            });
+            ComputeBackwardSequenceInternal(dConcat, inputGradient);
 
             return inputGradient;
         }
 
         private TensorBase BackwardBatch(TensorBase gradient)
         {
+            TensorBase dConcatBatch = _outputProjection.Backward(gradient);
+            
             int layers = gradient.Layers;
-            Tensor output = new Tensor(layers, gradient.Rows, gradient.Cols);
+            Tensor inputGradientBatch = new Tensor(layers, gradient.Rows, _embeddingSize);
 
-            Parallel.For(0, layers, b =>
+            // Sequential iteration over batch dimension prevents race conditions inside AttentionHead state
+            for (int b = 0; b < layers; b++)
             {
-                TensorBase gradSlice = TensorUtilitiesSimd.GetLayer(gradient, b);
-                TensorBase result = BackwardSequence(gradSlice);
-                TensorUtilitiesSimd.SetLayer(output, b, result);
-            });
+                TensorBase dConcatSlice = TensorUtilitiesSimd.GetLayer(dConcatBatch, b);
+                TensorBase inputGradSlice = TensorUtilitiesSimd.GetLayer(inputGradientBatch, b);
 
-            return output;
+                ComputeBackwardSequenceInternal(dConcatSlice, inputGradSlice);
+            }
+
+            return inputGradientBatch;
+        }
+
+        private void ComputeBackwardSequenceInternal(TensorBase dConcat, TensorBase targetInputGradient)
+        {
+            int numHeads = _heads.Length;
+            int rows = dConcat.Rows;
+
+            for (int i = 0; i < numHeads; i++)
+            {
+                int startColumn = i * _headSize;
+
+                // Extract a contiguous block tensor instead of strided TensorView
+                Tensor headGradient = new Tensor(rows, _headSize);
+                TensorUtilitiesSimd.CopyBlock(dConcat, startColumn, headGradient, 0, rows, _headSize);
+
+                TensorBase dInputHead = _heads[i].Backward(headGradient);
+
+                // Accumulate head gradients directly using SIMD
+                TensorMathSimd.ElementWiseAddInPlace(targetInputGradient, dInputHead);
+            }
+        }
+
+        public void ZeroGradients()
+        {
+            foreach (var head in _heads)
+                head.ZeroGradients();
+
+            _outputProjection.ZeroGradients();
         }
     }
 }

@@ -1,4 +1,5 @@
 using Serilog;
+using System.Threading.Tasks;
 using SimpleTransformer.Model.Extensions;
 using SimpleTransformer.Model.Extensions.Numerics;
 
@@ -8,20 +9,25 @@ namespace SimpleTransformer.Model
     {
         private readonly int _embeddingSize;
         private readonly float _epsilon;
+
         private float[]? _lastInvStd;
         private Tensor? _lastNormalized;
+
         private readonly Tensor _gamma;
         private readonly Tensor _beta;
-        public Tensor? Gamma => _gamma;
-        public Tensor? Beta => _beta;
-        public Tensor? GradientGamma => _gradientGamma;
-        public Tensor? GradientBeta => _gradientBeta;
         private readonly Tensor _gradientGamma;
         private readonly Tensor _gradientBeta;
+
+        public Tensor Gamma => _gamma;
+        public Tensor Beta => _beta;
+        public Tensor GradientGamma => _gradientGamma;
+        public Tensor GradientBeta => _gradientBeta;
+
         public IEnumerable<TrainableParameter> Parameters => _parameters;
         private readonly TrainableParameter[] _parameters;
-        
-        private TensorBase? _lastInput;        
+
+        private TensorBase? _lastInput;
+
         public LayerNorm(int embeddingSize, float epsilon = 1e-5f)
         {
             _embeddingSize = embeddingSize;
@@ -29,23 +35,26 @@ namespace SimpleTransformer.Model
 
             _gamma = new Tensor(embeddingSize);
             _beta = new Tensor(embeddingSize);
-            //Gradient
             _gradientGamma = new Tensor(embeddingSize);
             _gradientBeta = new Tensor(embeddingSize);
 
-            _parameters = new[] { new TrainableParameter(_gamma, _gradientGamma), new TrainableParameter(_beta, _gradientBeta) };
+            _parameters = new[]
+            {
+                new TrainableParameter(_gamma, _gradientGamma),
+                new TrainableParameter(_beta, _gradientBeta)
+            };
 
             InitParameters();
         }
 
         private void InitParameters()
         {
-            TensorUtilities.Fill(_gamma, 1.0f);
-            TensorUtilities.Fill(_beta, 0.0f);
-
-            TensorUtilities.Fill(_gradientGamma, 0.0f);
-            TensorUtilities.Fill(_gradientBeta, 0.0f);
+            TensorUtilitiesSimd.Fill(_gamma, 1.0f);
+            TensorUtilitiesSimd.Fill(_beta, 0.0f);
+            TensorUtilitiesSimd.Fill(_gradientGamma, 0.0f);
+            TensorUtilitiesSimd.Fill(_gradientBeta, 0.0f);
         }
+
         public TensorBase Forward(TensorBase input)
         {
             return input.Rank switch
@@ -55,228 +64,241 @@ namespace SimpleTransformer.Model
                 _ => throw new ArgumentException("LayerNorm expects Rank 2 or Rank 3.")
             };
         }
+
         private TensorBase ForwardSequence(TensorBase input)
         {
-            if(input.Rank != 2) throw new ArgumentException("LayerNorm expects a matrix.");
+            if (input.Cols != _embeddingSize)
+                throw new ArgumentException($"Expected {_embeddingSize} columns, got {input.Cols}.");
 
-            if(input.Cols != _embeddingSize) throw new ArgumentException("LayerNorm expects a matrix with embedding size columns.");
-
-            //Cache the input
             _lastInput = input;
+            EnsureCacheCapacity(totalRows: input.Rows, cols: input.Cols);
 
-            //Set up the cache
-            if(_lastInvStd == null || _lastInvStd.Length != input.Rows)
-            {
-                _lastInvStd = new float[input.Rows];
-            }
+            Tensor output = new Tensor(input.Rows, input.Cols);
+            ComputeLayerNormForward(input, output, startCacheRow: 0);
 
-            if(_lastNormalized == null || _lastNormalized.Rows != input.Rows || _lastNormalized.Cols != input.Cols)
-            {
-                _lastNormalized = new Tensor(input.Rows, input.Cols);
-            }
-
-            //Create the output
-            var output = new Tensor(input.Rows, input.Cols);
-
-            //For every row: 
-            // -> Compute average
-            // -> Compute variance
-            // -> For every column: 
-            //    -> Normalise the column
-            // -> Return the normalised row    
-
-            for (int row = 0; row < input.Rows; row++)
-            {
-                var (mean, variance) =
-                    StatsUtilities.MeanAndVarianceRow(input, row);
-
-                _lastInvStd[row] = 1f / MathF.Sqrt(variance + _epsilon);
-
-                for (int col = 0; col < input.Cols; col++)
-                {
-                    float normalized =
-                        (input[row, col] - mean) * _lastInvStd[row];
-
-                    _lastNormalized[row, col] = normalized;
-
-                    output[row, col] =
-                        normalized * _gamma[col] + _beta[col];
-                }
-            }
             return output;
         }
+
         private TensorBase ForwardBatch(TensorBase input)
         {
-            Tensor output =
-                new Tensor(
-                    input.Layers,
-                    input.Rows,
-                    input.Cols);
+            if (input.Cols != _embeddingSize)
+                throw new ArgumentException($"Expected {_embeddingSize} columns, got {input.Cols}.");
 
-            for (int layer = 0; layer < input.Layers; layer++)
+            _lastInput = input;
+            int totalRows = input.Layers * input.Rows;
+            EnsureCacheCapacity(totalRows: totalRows, cols: input.Cols);
+
+            Tensor output = new Tensor(input.Layers, input.Rows, input.Cols);
+            int layers = input.Layers;
+
+            Parallel.For(0, layers, l =>
             {
-                TensorBase slice =
-                    TensorUtilitiesSimd.GetLayer(input, layer);
+                TensorBase inputSlice = TensorUtilitiesSimd.GetLayer(input, l);
+                TensorBase outputSlice = TensorUtilitiesSimd.GetLayer(output, l);
+                int cacheRowOffset = l * input.Rows;
 
-                TensorBase result =
-                    ForwardSequence(slice);
-
-                TensorUtilitiesSimd.SetLayer(
-                    output,
-                    layer,
-                    result);
-            }
+                ComputeLayerNormForward(inputSlice, outputSlice, cacheRowOffset);
+            });
 
             return output;
-        }        
+        }
+
+        private void ComputeLayerNormForward(TensorBase input, TensorBase output, int startCacheRow)
+        {
+            int rows = input.Rows;
+            int cols = input.Cols;
+
+            float[] inData = input.Data;
+            float[] outData = output.Data;
+            float[] normData = _lastNormalized!.Data;
+            float[] gammaData = _gamma.Data;
+            float[] betaData = _beta.Data;
+
+            for (int r = 0; r < rows; r++)
+            {
+                int inRowOffset = input.Offset + r * input.Stride;
+                int outRowOffset = output.Offset + r * output.Stride;
+                int normRowOffset = (startCacheRow + r) * cols;
+
+                var (mean, variance) = StatsUtilities.MeanAndVarianceRow(input, r);
+                
+                float safeVariance = MathF.Max(0f, variance);
+                float invStd = 1f / MathF.Sqrt(safeVariance + _epsilon);
+
+                if (float.IsNaN(invStd) || float.IsInfinity(invStd))
+                {
+                    invStd = 1f; // Fallback sanity cap
+                }
+
+                _lastInvStd![startCacheRow + r] = invStd;
+
+                for (int c = 0; c < cols; c++)
+                {
+                    float x = inData[inRowOffset + c];
+                    float xHat = (x - mean) * invStd;
+
+                    normData[normRowOffset + c] = xHat;
+                    outData[outRowOffset + c] = xHat * gammaData[c] + betaData[c];
+                }
+            }
+        }
+
         public TensorBase Backward(TensorBase gradient)
         {
             return gradient.Rank switch
             {
                 2 => BackwardSequence(gradient),
                 3 => BackwardBatch(gradient),
-                _ => throw new ArgumentException("Linear layer expects rank 2 or rank 3.")
+                _ => throw new ArgumentException("LayerNorm expects Rank 2 or Rank 3.")
             };
         }
+
         private TensorBase BackwardSequence(TensorBase gradient)
         {
-            ZeroGradients();
-
             ValidateBackwardState(gradient);
-            
-            var inputGradient = new Tensor(
-                _lastInput.Rows,
-                _lastInput.Cols);
 
-            for (int row = 0; row < _lastInput.Rows; row++)
-            {
-                AccumulateParameterGradients(row, gradient);
-
-                var (sumDxHat, sumDxHatXHat) = ComputeDerivativeSums(row, gradient);
-
-                ComputeInputGradient(
-                    row,
-                    gradient,
-                    sumDxHat,
-                    sumDxHatXHat,
-                    inputGradient);
-            }
+            Tensor inputGradient = new Tensor(_lastInput!.Rows, _lastInput.Cols);
+            ComputeLayerNormBackward(gradient, inputGradient, startCacheRow: 0, accumulationLock: null);
 
             return inputGradient;
         }
+
         private TensorBase BackwardBatch(TensorBase gradient)
         {
-            Log.Information("[LayerNorm.BackwardBatch] Started backpropagation...");
-            Tensor output =
-                new Tensor(
-                    gradient.Layers,
-                    gradient.Rows,
-                    gradient.Cols);
+            ValidateBackwardState(gradient);
 
-            for (int layer = 0; layer < gradient.Layers; layer++)
+            int layers = gradient.Layers;
+            Tensor inputGradient = new Tensor(layers, gradient.Rows, gradient.Cols);
+            object accumulationLock = new object();
+
+            Parallel.For(0, layers, l =>
             {
-                TensorBase slice =
-                    TensorUtilitiesSimd.GetLayer(gradient, layer);
+                TensorBase gradSlice = TensorUtilitiesSimd.GetLayer(gradient, l);
+                TensorBase dInputSlice = TensorUtilitiesSimd.GetLayer(inputGradient, l);
+                int cacheRowOffset = l * gradient.Rows;
 
-                TensorBase result =
-                    BackwardSequence(slice);
+                ComputeLayerNormBackward(gradSlice, dInputSlice, cacheRowOffset, accumulationLock);
+            });
 
-                TensorUtilitiesSimd.SetLayer(
-                    output,
-                    layer,
-                    result);
-            }
-
-            return output;
-        }        
-
-        private (float sumDxHat, float sumDxHatXHat)
-            ComputeDerivativeSums(
-                int row,
-                TensorBase gradient)
-        {
-            float sumDxHat = 0f;
-            float sumDxHatXHat = 0f;
-
-            for (int col = 0; col < _embeddingSize; col++)
-            {
-                float dxHat =
-                    gradient[row, col] * _gamma[col];
-
-                float xHat =
-                    _lastNormalized![row, col];
-
-                sumDxHat += dxHat;
-
-                sumDxHatXHat +=
-                    dxHat * xHat;
-            }
-
-            return (sumDxHat, sumDxHatXHat);
+            return inputGradient;
         }
 
-        private void AccumulateParameterGradients(
-            int row,
-            TensorBase gradient)
+        private void ComputeLayerNormBackward(
+            TensorBase gradient, 
+            TensorBase inputGradient, 
+            int startCacheRow, 
+            object? accumulationLock)
         {
-            for (int col = 0; col < _embeddingSize; col++)
-            {
-                _gradientBeta[col] += gradient[row, col];
+            int rows = gradient.Rows;
+            int cols = _embeddingSize;
 
-                _gradientGamma[col] +=
-                    gradient[row, col] *
-                    _lastNormalized![row, col];
+            float[] gradData = gradient.Data;
+            float[] dInputData = inputGradient.Data;
+            float[] normData = _lastNormalized!.Data;
+            float[] gammaData = _gamma.Data;
+
+            // Thread-local accumulation buffers for parameter gradients
+            float[] localDGamma = new float[cols];
+            float[] localDBeta = new float[cols];
+
+            for (int r = 0; r < rows; r++)
+            {
+                int gradRowOffset = gradient.Offset + r * gradient.Stride;
+                int dInputRowOffset = inputGradient.Offset + r * inputGradient.Stride;
+                int normRowOffset = (startCacheRow + r) * cols;
+                float invStd = _lastInvStd![startCacheRow + r];
+
+                float sumDxHat = 0f;
+                float sumDxHatXHat = 0f;
+
+                // Pass 1: Local reduction sums & parameter accumulation
+                for (int c = 0; c < cols; c++)
+                {
+                    float g = gradData[gradRowOffset + c];
+                    float xHat = normData[normRowOffset + c];
+                    float dxHat = g * gammaData[c];
+
+                    localDBeta[c] += g;
+                    localDGamma[c] += g * xHat;
+
+                    sumDxHat += dxHat;
+                    sumDxHatXHat += dxHat * xHat;
+                }
+
+                // Pass 2: Calculate input gradients
+                float invCols = 1.0f / cols;
+                for (int c = 0; c < cols; c++)
+                {
+                    float g = gradData[gradRowOffset + c];
+                    float xHat = normData[normRowOffset + c];
+                    float dxHat = g * gammaData[c];
+
+                    dInputData[dInputRowOffset + c] = invStd * (dxHat - (sumDxHat + xHat * sumDxHatXHat) * invCols);
+                }
+            }
+
+            // Thread-safe update to global parameter gradients
+            if (accumulationLock != null)
+            {
+                lock (accumulationLock)
+                {
+                    AccumulateGradients(localDGamma, localDBeta);
+                }
+            }
+            else
+            {
+                AccumulateGradients(localDGamma, localDBeta);
             }
         }
 
-        private void ComputeInputGradient(
-            int row,
-            TensorBase gradient,
-            float sumDxHat,
-            float sumDxHatXHat,
-            TensorBase inputGradient)
+        private void AccumulateGradients(float[] dGamma, float[] dBeta)
         {
-            int numEmbeddings = _embeddingSize;
+            float[] gGrad = _gradientGamma.Data;
+            float[] bGrad = _gradientBeta.Data;
 
-            float invStd = _lastInvStd![row];
-
-            for (int col = 0; col < numEmbeddings; col++)
+            for (int c = 0; c < _embeddingSize; c++)
             {
-                float dxHat =
-                    gradient[row, col] * _gamma[col];
+                gGrad[c] += dGamma[c];
+                bGrad[c] += dBeta[c];
+            }
+        }
 
-                float xHat =
-                    _lastNormalized![row, col];
+        private void EnsureCacheCapacity(int totalRows, int cols)
+        {
+            // Reallocate or reset if shapes don't match exactly
+            if (_lastInvStd == null || _lastInvStd.Length != totalRows)
+            {
+                _lastInvStd = new float[totalRows];
+            }
+            else
+            {
+                Array.Clear(_lastInvStd, 0, _lastInvStd.Length);
+            }
 
-                inputGradient[row, col] =
-                    invStd *
-                    (
-                        numEmbeddings * dxHat
-                        - sumDxHat
-                        - xHat * sumDxHatXHat
-                    ) / numEmbeddings;
+            if (_lastNormalized == null || _lastNormalized.Rows != totalRows || _lastNormalized.Cols != cols)
+            {
+                _lastNormalized = new Tensor(totalRows, cols);
+            }
+            else
+            {
+                TensorUtilitiesSimd.Fill(_lastNormalized, 0f);
             }
         }
 
         private void ValidateBackwardState(TensorBase gradient)
         {
-            if (_lastInput == null ||
-                _lastInvStd == null ||
-                _lastNormalized == null)
+            if (_lastInput == null || _lastInvStd == null || _lastNormalized == null)
             {
-                throw new InvalidOperationException(
-                    "Forward must be called before Backward.");
+                throw new InvalidOperationException("Forward must be called before Backward.");
             }
 
-            TensorUtilitiesSimd.ValidateSameShape(
-                gradient,
-                _lastInput);
+            TensorUtilitiesSimd.ValidateSameShape(gradient, _lastInput);
         }
 
         public void ZeroGradients()
         {
-            TensorUtilities.Fill(_gradientGamma, 0f);
-            TensorUtilities.Fill(_gradientBeta, 0f);
+            TensorUtilitiesSimd.Fill(_gradientGamma, 0f);
+            TensorUtilitiesSimd.Fill(_gradientBeta, 0f);
         }
     }
 }
