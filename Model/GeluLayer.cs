@@ -1,5 +1,5 @@
-using System.Diagnostics;
-using Serilog;
+using System;
+using System.Threading.Tasks;
 using SimpleTransformer.Model.Extensions;
 using SimpleTransformer.Model.Extensions.Numerics;
 
@@ -8,114 +8,69 @@ namespace SimpleTransformer.Model
     public class GeluLayer : ILayer
     {
         private TensorBase? _lastInput;
-        private TensorBase? _cachedGradient;
+
         public TensorBase Forward(TensorBase input)
         {
-            return input.Rank switch
+            if (input.Rank != 2 && input.Rank != 3)
+                throw new ArgumentException("Input must be Rank 2 or Rank 3.");
+
+            _lastInput = input;
+
+            // Pre-allocate full output tensor (Rank 2 or Rank 3)
+            Tensor output = input.Rank == 2
+                ? new Tensor(input.Rows, input.Cols)
+                : new Tensor(input.Layers, input.Rows, input.Cols);
+
+            // Parallelized contiguous or multi-threaded processing
+            if (input.Rank == 2)
             {
-                2 => ForwardSequence(input),
-                3 => ForwardBatch(input),
-                _ => throw new ArgumentException("Input must be Rank 2 or Rank 3.")
-            };
+                TensorMathSimd.GeluInto(input, output);
+            }
+            else
+            {
+                int layers = input.Layers;
+                Parallel.For(0, layers, layer =>
+                {
+                    TensorBase inputSlice = TensorUtilitiesSimd.GetLayer(input, layer);
+                    TensorBase outputSlice = TensorUtilitiesSimd.GetLayer(output, layer);
+                    TensorMathSimd.GeluInto(inputSlice, outputSlice);
+                });
+            }
+
+            return output;
         }
 
         public TensorBase Backward(TensorBase gradient)
         {
-            return gradient.Rank switch
-            {
-                2 => BackwardSequence(gradient),
-                3 => BackwardBatch(gradient),
-                _ => throw new ArgumentException("Gradient must be Rank 2 or Rank 3.")
-            };
-}
-        private TensorBase ForwardSequence(TensorBase input)
-        {
-            //Validate input
-            if (input.Rank != 2) throw new ArgumentException("Input must be a matrix.");
-
-            //Cache the input
-            _lastInput = input;
-
-            return TensorMathSimd.Gelu(input);
-        }
-        private readonly List<TensorBase> _lastInputs = new();
-
-        private TensorBase ForwardBatch(TensorBase input)
-        {
-            _lastInputs.Clear();
-
-            Tensor output =
-                new Tensor(
-                    input.Layers,
-                    input.Rows,
-                    input.Cols);
-
-            for (int layer = 0; layer < input.Layers; layer++)
-            {
-                TensorBase slice =
-                    TensorUtilitiesSimd.GetLayer(input, layer);
-
-                TensorBase result =
-                    ForwardSequence(slice);
-
-                _lastInputs.Add(slice);
-
-                TensorUtilitiesSimd.SetLayer(
-                    output,
-                    layer,
-                    result);
-            }
-            return output;
-        }
-
-        private TensorBase BackwardSequence(TensorBase gradient)
-        {
             if (_lastInput == null)
-                throw new InvalidOperationException(
-                    "Forward must be called before Backward.");
+                throw new InvalidOperationException("Forward must be called before Backward.");
 
-            _cachedGradient ??=
-                new Tensor(_lastInput.Rows, _lastInput.Cols);
+            if (gradient.Rank != _lastInput.Rank)
+                throw new ArgumentException($"Gradient rank ({gradient.Rank}) must match input rank ({_lastInput.Rank}).");
 
-            if (_cachedGradient.Rows != _lastInput.Rows ||
-                _cachedGradient.Cols != _lastInput.Cols)
+            // Pre-allocate output input-gradient tensor matching shape
+            Tensor inputGradient = gradient.Rank == 2
+                ? new Tensor(_lastInput.Rows, _lastInput.Cols)
+                : new Tensor(_lastInput.Layers, _lastInput.Rows, _lastInput.Cols);
+
+            if (gradient.Rank == 2)
             {
-                _cachedGradient =
-                    new Tensor(_lastInput.Rows, _lastInput.Cols);
+                TensorMathSimd.GeluBackwardInto(_lastInput, gradient, inputGradient);
+            }
+            else
+            {
+                int layers = gradient.Layers;
+                Parallel.For(0, layers, layer =>
+                {
+                    TensorBase inputSlice = TensorUtilitiesSimd.GetLayer(_lastInput, layer);
+                    TensorBase gradSlice = TensorUtilitiesSimd.GetLayer(gradient, layer);
+                    TensorBase outGradSlice = TensorUtilitiesSimd.GetLayer(inputGradient, layer);
+
+                    TensorMathSimd.GeluBackwardInto(inputSlice, gradSlice, outGradSlice);
+                });
             }
 
-            TensorMathSimd.GeluBackwardInto(
-                _lastInput,
-                gradient,
-                _cachedGradient);
-
-            return _cachedGradient;
-        }
-        private TensorBase BackwardBatch(TensorBase gradient)
-        {
-            Tensor output =
-                new Tensor(
-                    gradient.Layers,
-                    gradient.Rows,
-                    gradient.Cols);
-
-            for (int layer = 0; layer < gradient.Layers; layer++)
-            {
-                _lastInput = _lastInputs[layer];
-
-                TensorBase gradSlice =
-                    TensorUtilitiesSimd.GetLayer(gradient, layer);
-
-                TensorBase result =
-                    BackwardSequence(gradSlice);
-
-                TensorUtilitiesSimd.SetLayer(
-                    output,
-                    layer,
-                    result);
-            }
-
-            return output;
+            return inputGradient;
         }
     }
 }

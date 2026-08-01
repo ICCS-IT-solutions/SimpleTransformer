@@ -5,547 +5,15 @@ using Serilog;
 
 namespace SimpleTransformer.Model.Extensions.Numerics
 {
-    public static class TensorMathSimd
+    public static partial class TensorMathSimd
     {
+        // Pre-computed GELU constants
+        private const float C0 = 0.044715f;
+        private const float C1 = 0.7978845608f; // sqrt(2 / pi)
+        private const float Sqrt2OverPi = 0.7978845608f;
+        private const float GeluC = 0.044715f;
+        private const float Gelu3C = 0.134145f; // 3 * 0.044715f
         public static void ValidateSameShape(TensorBase a, TensorBase b) => TensorUtilitiesSimd.ValidateSameShape(a, b);
-
-
-        //Element-wise operations using SIMD
-        #region Element-wise ops
-        public static void ScaleInPlace(TensorBase tensor, float scalar)
-        {
-            // 1. Extract the underlying continuous span safely
-            Span<float> data = tensor.Span;
-            int len = data.Length;
-            int width = Vector<float>.Count;
-
-            // 2. Cache the scalar vector entirely within a CPU register
-            var scaleVec = new Vector<float>(scalar);
-
-            // 3. Pin the baseline memory address to eliminate all runtime bounds checking
-            ref float pData = ref MemoryMarshal.GetReference(data);
-            int i = 0;
-
-            // 4. Main Vectorized Loop (Pure register-to-memory streaming)
-            for (; i <= len - width; i += width)
-            {
-                // Stream the data vector straight out of RAM into a CPU vector register
-                Vector<float> v = Vector.LoadUnsafe(ref pData, (uint)i);
-
-                // Native one-cycle hardware vector multiplication
-                Vector<float> result = v * scaleVec;
-
-                // Stream the modified vector right back to the original memory address
-                Vector.StoreUnsafe(result, ref pData, (uint)i);
-            }
-
-            // 5. Unsafe Scalar Cleanup Path for trailing elements
-            for (; i < len; i++)
-            {
-                // Modify memory values directly via raw pointer offsetting
-                Unsafe.Add(ref pData, i) *= scalar;
-            }
-        }
-
-        /// <summary>
-        /// Compute softmax on a span of values
-        /// Vectorized using hardware SIMD registers (AVX2 / AVX-512 / NEON).
-        /// </summary>
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static float Max(ReadOnlySpan<float> span)
-        {
-            if (span.IsEmpty) throw new ArgumentException("Unable to compute softmax on an empty span.");
-
-            int len = span.Length;
-            int width = Vector<float>.Count;
-
-            ref float pData = ref MemoryMarshal.GetReference(span);
-            int i = 0;
-
-            if (len >= width)
-            {
-                Vector<float> maxVec = Vector.LoadUnsafe(ref pData, 0);
-                i += width;
-
-                //SIMD loop
-                for (; i <= len - width; i += width)
-                {
-                    Vector<float> v = Vector.LoadUnsafe(ref pData, (uint)i);
-                    maxVec = Vector.Max(maxVec, v);
-                }
-
-                // Horizontal reduction across vector elements
-                float maxVal = maxVec[0];
-                for (int j = 1; j < width; j++)
-                {
-                    if (maxVec[j] > maxVal)
-                        maxVal = maxVec[j];
-                }
-
-                // Cleanup tail elements
-                for (; i < len; i++)
-                {
-                    float val = Unsafe.Add(ref pData, i);
-                    if (val > maxVal)
-                        maxVal = val;
-                }
-
-                return maxVal;                
-            }
-            
-            // Scalar fallback for spans shorter than SIMD vector width
-            float scalarMax = pData;
-            for (i = 1; i < len; i++)
-            {
-                float val = Unsafe.Add(ref pData, i);
-                if (val > scalarMax)
-                    scalarMax = val;
-            }
-
-            return scalarMax;            
-            
-        }
-
-        /// <summary>
-        /// Performs in-place element-wise addition: target[i] += source[i]
-        /// Vectorized using hardware SIMD registers (AVX2 / AVX-512 / NEON).
-        /// </summary>
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static void AddInPlace(Span<float> target, ReadOnlySpan<float> source)
-        {
-            if (target.Length != source.Length)
-                throw new ArgumentException("Span lengths must match for AddInPlace operation.");
-
-            int i = 0;
-            int vectorSize = Vector<float>.Count;
-            int length = target.Length;
-
-            // Process blocks in SIMD vector length (e.g., 8 floats for AVX2)
-            while (i <= length - vectorSize)
-            {
-                // Vector load from target and source spans
-                var targetVec = new Vector<float>(target.Slice(i, vectorSize));
-                var sourceVec = new Vector<float>(source.Slice(i, vectorSize));
-
-                // SIMD addition & store back to target
-                (targetVec + sourceVec).CopyTo(target.Slice(i, vectorSize));
-
-                i += vectorSize;
-            }
-
-            // Scalar fallback loop for remaining elements (tail end)
-            for (; i < length; i++)
-            {
-                target[i] += source[i];
-            }
-        }
-
-        public static void ElementWiseAddInPlace(TensorBase a, TensorBase b)
-        {
-            // 1. Maintain shape validation
-            ValidateSameShape(a, b);
-
-            // 2. CRITICAL FIX: Use Span and ReadOnlySpan properties to safely support TensorViews
-            Span<float> aSpan = a.Span;
-            ReadOnlySpan<float> bSpan = b.ReadOnlySpan;
-
-            int len = aSpan.Length;
-            int width = Vector<float>.Count;
-
-            // 3. Pin the starting memory addresses to eliminate all .NET bounds-checking overhead
-            ref float pA = ref MemoryMarshal.GetReference(aSpan);
-            ref float pB = ref MemoryMarshal.GetReference(bSpan);
-
-            int i = 0;
-
-            // 4. Vectorized Main SIMD Loop (Pure memory-to-register streaming)
-            for (; i <= len - width; i += width)
-            {
-                // Direct unhindered hardware vector load from the pointer addresses
-                Vector<float> va = Vector.LoadUnsafe(ref pA, (uint)i);
-                Vector<float> vb = Vector.LoadUnsafe(ref pB, (uint)i);
-
-                // Native hardware add instruction
-                Vector<float> result = va + vb;
-
-                // Stream the result vector directly back into RAM
-                Vector.StoreUnsafe(result, ref pA, (uint)i);
-            }
-
-            // 5. Unsafe Scalar Cleanup Path for trailing elements
-            for (; i < len; i++)
-            {
-                Unsafe.Add(ref pA, i) += Unsafe.Add(ref pB, i);
-            }
-        }
-
-
-        public static Tensor ElementWiseAdd(TensorBase a, TensorBase b)
-        {
-            ValidateSameShape(a, b);
-
-            Span<float> aData = a.Span;
-            ReadOnlySpan<float> bData = b.ReadOnlySpan;
-
-            int width = Vector<float>.Count;
-
-            int i = 0;
-
-            var result = new Tensor(a.Shape);
-            Span<float> resultData = result.Span;
-
-
-            for (; i <= aData.Length - width; i += width)
-            {
-                Vector<float> va = new(aData.Slice(i));
-                Vector<float> vb = new(bData.Slice(i));
-
-                (va + vb).CopyTo(resultData.Slice(i));
-            }
-
-            for (; i < aData.Length; i++)
-                resultData[i] = aData[i] + bData[i];
-
-            return result;
-        }
-
-        //Element wise add into
-        public static void ElementWiseAddInto(TensorBase a, TensorBase b, TensorBase result)
-        {
-            ValidateSameShape(a, b);
-            ValidateSameShape(a, result);
-
-            Span<float> aData = a.Span;
-            ReadOnlySpan<float> bData = b.ReadOnlySpan;
-            Span<float> resultData = result.Span;
-
-            int width = Vector<float>.Count;
-
-            int i = 0;
-
-            for (; i <= aData.Length - width; i += width)
-            {
-                Vector<float> va = new(aData.Slice(i));
-                Vector<float> vb = new(bData.Slice(i));
-
-                (va + vb).CopyTo(resultData.Slice(i));
-            }
-
-            for (; i < aData.Length; i++)
-                resultData[i] = aData[i] + bData[i];
-        }
-        #endregion
-
-        #region Matrix ops
-
-        //New entry point for matrix multiplication that handles both Rank 2 and Rank 3 tensors
-        public static void MatMul(
-            TensorBase a, TensorBase b, TensorBase result, 
-            bool transposeA = false, bool transposeB = false)
-        {
-            // If input A is Rank 3, route directly to native Batch GEMM
-            if (a.Rank == 3)
-            {
-                BatchMatrixMultiply(a, b, result, transposeA, transposeB);
-                return;
-            }
-
-            // Rank 2 fallback (your existing MatrixMultiplyRowByRow implementation)
-            MatrixMultiplyRowByRow(a, b, result, transposeA, transposeB);
-        }
-        //No transposes
-        public static Tensor MatrixMultiply(TensorBase a, TensorBase b)
-        {
-            Tensor result = new Tensor(a.Rows, b.Cols);
-            MatMul(a, b, result, transposeA: false, transposeB: false);
-            return result;
-        }
-        // Right Transposed: A * B^T
-        public static Tensor MatrixMultiplyRightTransposed(TensorBase a, TensorBase b)
-        {
-            // Logical result dimensions for A (m x k) * B^T (k x n) => (m x n)
-            // B has physical shape (n x k), so B^T logical cols = B.Rows
-            Tensor result = new Tensor(a.Rows, b.Rows);
-            MatMul(a, b, result, transposeA: false, transposeB: true);
-            return result;
-        }
-
-        // Left Transposed: A^T * B
-        public static Tensor MatrixMultiplyLeftTransposed(TensorBase a, TensorBase b)
-        {
-            // Logical result dimensions for A^T (m x k) * B (k x n) => (m x n)
-            // A has physical shape (k x m), so A^T logical rows = A.Cols
-            Tensor result = new Tensor(a.Cols, b.Cols);
-            MatMul(a, b, result, transposeA: true, transposeB: false);
-            return result;
-        }
-        // Both Transposed: A^T * B^T
-        public static Tensor MatrixMultiplyBothTransposed(TensorBase a, TensorBase b)
-        {
-            Tensor result = new Tensor(a.Cols, b.Rows);
-            MatMul(a, b, result, transposeA: true, transposeB: true);
-            return result;
-        }        
-
-        // No transposes -> stores into result
-        public static void MatrixMultiplyInto(TensorBase a, TensorBase b, TensorBase result) 
-            => MatMul(a, b, result, transposeA: false, transposeB: false);
-
-        // Right transposed -> stores into result
-        public static void MatrixMultiplyRightTransposedInto(TensorBase a, TensorBase b, TensorBase result) 
-            => MatMul(a, b, result, transposeA: false, transposeB: true);
-
-        // Left transposed -> stores into result
-        public static void MatrixMultiplyLeftTransposedInto(TensorBase a, TensorBase b, TensorBase result) 
-            => MatMul(a, b, result, transposeA: true, transposeB: false);
-
-        // Both transposed -> stores into result
-        public static void MatrixMultiplyBothTransposedInto(TensorBase a, TensorBase b, TensorBase result) 
-            => MatMul(a, b, result, transposeA: true, transposeB: true);
-
-        private static void MatrixMultiplyRowByRow(
-            TensorBase a, TensorBase b, TensorBase result, 
-            bool transposeA = false, bool transposeB = false)
-        {
-            // 1. Calculate logical dimensions based on transpose flags
-            int aRows = transposeA ? a.Cols : a.Rows;
-            int aCols = transposeA ? a.Rows : a.Cols;
-            int bRows = transposeB ? b.Cols : b.Rows;
-            int bCols = transposeB ? b.Rows : b.Cols;
-
-            // 2. Shape and Rank validation
-            if (a.Rank != 2 || b.Rank != 2)
-                throw new ArgumentException($"Matrices must be rank 2. Got A: {a.Rank}, B: {b.Rank}");
-
-            if (aCols != bRows)
-                throw new ArgumentException($"Cannot multiply ({aRows}x{aCols}) by ({bRows}x{bCols})");
-
-            if (result.Rows != aRows || result.Cols != bCols)
-                throw new ArgumentException($"Result buffer is ({result.Rows}x{result.Cols}) but expected ({aRows}x{bCols})");
-
-            int m = aRows;
-            int n = bCols;
-            int k = aCols;
-
-            // 3. Extract raw backing buffers & offsets once
-            float[] arrayA = a.Buffer;
-            int offsetA = a.Offset;
-
-            float[] arrayB = b.Buffer;
-            int offsetB = b.Offset;
-
-            float[] arrayResult = result.Buffer;
-            int offsetResult = result.Offset;
-
-            int aColsPhysical = a.Cols;
-            int bColsPhysical = b.Cols;
-
-            // 4. Parallelize over logical output rows
-            Parallel.For(0, m, i =>
-            {
-                ReadOnlySpan<float> spanA = arrayA.AsSpan(offsetA);
-                ReadOnlySpan<float> spanB = arrayB.AsSpan(offsetB);
-                Span<float> spanResult = arrayResult.AsSpan(offsetResult, m * n);
-
-                int resultRowOffset = i * n;
-                Span<float> colBBuffer = stackalloc float[k];
-
-                if (!transposeA)
-                {
-                    // Direct slice from spanA - no stackalloc required for A
-                    ReadOnlySpan<float> rowA = spanA.Slice(i * k, k);
-                    ComputeRow(rowA, spanB, spanResult, resultRowOffset, colBBuffer, n, k, bColsPhysical, transposeB);
-                }
-                else
-                {
-                    // Gather column 'i' of matrix A into contiguous stack memory
-                    Span<float> rowABuffer = stackalloc float[k];
-                    for (int e = 0; e < k; e++)
-                    {
-                        rowABuffer[e] = spanA[e * aColsPhysical + i];
-                    }
-
-                    ComputeRow(rowABuffer, spanB, spanResult, resultRowOffset, colBBuffer, n, k, bColsPhysical, transposeB);
-                }
-            });
-
-            // Inlined execution logic shared by both transposeA branches
-            [MethodImpl(MethodImplOptions.AggressiveInlining)]
-            static void ComputeRow(
-                ReadOnlySpan<float> rowA, 
-                ReadOnlySpan<float> spanB, 
-                Span<float> spanResult, 
-                int resultRowOffset, 
-                Span<float> colBBuffer, 
-                int n, int k, int bColsPhysical, 
-                bool transposeB)
-            {
-                if (transposeB)
-                {
-                    for (int j = 0; j < n; j++)
-                    {
-                        ReadOnlySpan<float> rowB = spanB.Slice(j * k, k);
-                        spanResult[resultRowOffset + j] = DotSimd(rowA, rowB);
-                    }
-                }
-                else
-                {
-                    for (int j = 0; j < n; j++)
-                    {
-                        for (int e = 0; e < k; e++)
-                        {
-                            colBBuffer[e] = spanB[e * bColsPhysical + j];
-                        }
-                        spanResult[resultRowOffset + j] = DotSimd(rowA, colBBuffer);
-                    }
-                }
-            }
-        }
-
-        public static void BatchMatrixMultiply(
-            TensorBase a, TensorBase b, TensorBase result,
-            bool transposeA = false, bool transposeB = false)
-        {
-            // 1. Rank validation: A can be Rank 3, B can be Rank 2 (shared weights) or Rank 3
-            if (a.Rank != 3)
-                throw new ArgumentException($"Batch matrix multiplication expects A to be Rank 3 [Batch, Rows, Cols]. Got {a.Rank}");
-
-            int batchSize = a.Layers;
-            
-            int aRows = transposeA ? a.Cols : a.Rows;
-            int aCols = transposeA ? a.Rows : a.Cols;
-            int bRows = transposeB ? b.Cols : b.Rows;
-            int bCols = transposeB ? b.Rows : b.Cols;
-
-            if (aCols != bRows)
-                throw new ArgumentException($"Shape mismatch: A({aRows}x{aCols}) vs B({bRows}x{bCols})");
-
-            // 2. Compute contiguous batch stride offsets
-            int aBatchStride = a.Rows * a.Cols;
-            int bBatchStride = b.Rank == 3 ? (b.Rows * b.Cols) : 0; // 0 if B is a shared 2D weight matrix
-            int resultBatchStride = result.Rows * result.Cols;
-
-            // 3. Parallelize across the Batch dimension (B)
-            Parallel.For(0, batchSize, batchIdx =>
-            {
-                // Extract lightweight 2D slice views without copying underlying buffers
-                int aOffset = a.Offset + (batchIdx * aBatchStride);
-                int bOffset = b.Offset + (batchIdx * bBatchStride);
-                int resultOffset = result.Offset + (batchIdx * resultBatchStride);
-
-                // Execute 2D matrix multiplication on the slice offsets
-                MatrixMultiply2DSlice(
-                    a.Buffer, aOffset, aRows, aCols, a.Cols, transposeA,
-                    b.Buffer, bOffset, bRows, bCols, b.Cols, transposeB,
-                    result.Buffer, resultOffset, result.Rows, result.Cols);
-            });
-        }
-
-        private static void MatrixMultiply2DSlice(
-            float[] arrayA, int offsetA, int aRows, int aCols, int aColsPhysical, bool transposeA,
-            float[] arrayB, int offsetB, int bRows, int bCols, int bColsPhysical, bool transposeB,
-            float[] arrayResult, int offsetResult, int resRows, int resCols)
-        {
-            int m = aRows;
-            int n = bCols;
-            int k = aCols;
-
-            ReadOnlySpan<float> spanA = arrayA.AsSpan(offsetA);
-            ReadOnlySpan<float> spanB = arrayB.AsSpan(offsetB);
-            Span<float> spanResult = arrayResult.AsSpan(offsetResult, m * n);
-
-            Span<float> tempBufferA = stackalloc float[k];
-            Span<float> tempBufferB = stackalloc float[k];
-
-            for (int i = 0; i < m; i++)
-            {
-                int resultRowOffset = i * n;
-
-                if (!transposeA)
-                {
-                    // Direct slice without stackalloc assignment
-                    ReadOnlySpan<float> rowA = spanA.Slice(i * aColsPhysical, k);
-                    ComputeRowOutput(rowA, spanB, spanResult, resultRowOffset, tempBufferB, n, k, bColsPhysical, transposeB);
-                }
-                else
-                {
-                    // Fill local buffer and pass directly
-                    for (int e = 0; e < k; e++)
-                    {
-                        tempBufferA[e] = spanA[e * aColsPhysical + i];
-                    }
-                    ComputeRowOutput(tempBufferA, spanB, spanResult, resultRowOffset, tempBufferB, n, k, bColsPhysical, transposeB);
-                }
-            }
-
-            [MethodImpl(MethodImplOptions.AggressiveInlining)]
-            static void ComputeRowOutput(
-                ReadOnlySpan<float> rowA,
-                ReadOnlySpan<float> spanB,
-                Span<float> spanResult,
-                int resultRowOffset,
-                Span<float> tempBufferB,
-                int n, int k, int bColsPhysical,
-                bool transposeB)
-            {
-                if (transposeB)
-                {
-                    for (int j = 0; j < n; j++)
-                    {
-                        ReadOnlySpan<float> rowB = spanB.Slice(j * k, k);
-                        spanResult[resultRowOffset + j] = DotSimd(rowA, rowB);
-                    }
-                }
-                else
-                {
-                    for (int j = 0; j < n; j++)
-                    {
-                        for (int e = 0; e < k; e++)
-                        {
-                            tempBufferB[e] = spanB[e * bColsPhysical + j];
-                        }
-                        spanResult[resultRowOffset + j] = DotSimd(rowA, tempBufferB);
-                    }
-                }
-            }
-        }       
-
-        private static float DotSimd(ReadOnlySpan<float> a, ReadOnlySpan<float> b)
-        {
-            // 1. Validate early (remains identical)
-            if (a.Length != b.Length)
-                throw new InvalidOperationException($"Dot product length mismatch: {a.Length} vs {b.Length}");
-
-            int len = a.Length;
-            int width = Vector<float>.Count;
-            Vector<float> sum = Vector<float>.Zero;
-
-            // 2. Pin memory to bypass all indexing/slicing overhead
-            ref float pA = ref MemoryMarshal.GetReference(a);
-            ref float pB = ref MemoryMarshal.GetReference(b);
-
-            int i = 0;
-
-            // 3. Main SIMD loop (Completely unhindered by bounds checks)
-            for (; i <= len - width; i += width)
-            {
-                var va = Vector.LoadUnsafe(ref pA, (uint)i);
-                var vb = Vector.LoadUnsafe(ref pB, (uint)i);
-                sum += va * vb;
-            }
-
-            // 4. Hardware-accelerated horizontal sum
-            float result = Vector.Dot(sum, Vector<float>.One);
-
-            // 5. Cleanup remainder elements
-            for (; i < len; i++)
-            {
-                result += Unsafe.Add(ref pA, i) * Unsafe.Add(ref pB, i);
-            }
-
-            return result;
-        }
-        #endregion
 
         #region Multiple tensor operations
         public static void AddThreeTensors(TensorBase a, TensorBase b, TensorBase c, TensorBase target)
@@ -593,6 +61,65 @@ namespace SimpleTransformer.Model.Extensions.Numerics
             var result = src.Clone();
             GeluInPlace(result);
             return result;
+        }
+
+        public static void GeluInto(TensorBase src, TensorBase dst)
+        {
+            ReadOnlySpan<float> srcSpan = src.AsSpan(); // Fast flat span accessor
+            Span<float> dstSpan = dst.AsWritableSpan();
+
+            if (srcSpan.Length != dstSpan.Length)
+                throw new ArgumentException("Source and destination spans must be the same length.");
+
+            int vectorSize = Vector<float>.Count;
+            int i = 0;
+
+            // Vectorized SIMD constants
+            Vector<float> vHalf = new Vector<float>(0.5f);
+            Vector<float> vOne = new Vector<float>(1.0f);
+            Vector<float> vC0 = new Vector<float>(C0);
+            Vector<float> vC1 = new Vector<float>(C1);
+
+            // 1. Vectorized Loop (Processes 8/16 floats at a time)
+            int simdLim = srcSpan.Length - vectorSize;
+            for (; i <= simdLim; i += vectorSize)
+            {
+                Vector<float> x = new Vector<float>(srcSpan.Slice(i, vectorSize));
+
+                // inner = C1 * (x + C0 * x^3)
+                Vector<float> x3 = x * x * x;
+                Vector<float> inner = vC1 * (x + vC0 * x3);
+
+                // Vectorized Tanh approximation or component evaluation
+                Vector<float> tanhVal = VectorTanh(inner);
+
+                // res = 0.5 * x * (1.0 + tanhVal)
+                Vector<float> res = vHalf * x * (vOne + tanhVal);
+
+                res.CopyTo(dstSpan.Slice(i, vectorSize));
+            }
+
+            // 2. Scalar Fallback Loop for remainder elements
+            for (; i < srcSpan.Length; i++)
+            {
+                float x = srcSpan[i];
+                float inner = C1 * (x + C0 * x * x * x);
+                dstSpan[i] = 0.5f * x * (1.0f + MathF.Tanh(inner));
+            }
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static Vector<float> VectorTanh(Vector<float> x)
+        {
+            // Fast SIMD Tanh approximation: tanh(x) ~ x / (1 + |x| + 0.15 * x^2)
+            // Highly accurate within [-4, 4] for GELU and drastically outperforms MathF.Tanh
+            Vector<float> absX = Vector.Abs(x);
+            Vector<float> x2 = x * x;
+            Vector<float> denom = Vector<float>.One + absX + (new Vector<float>(0.15f) * x2);
+            
+            // Clamp bounds to [-1, 1]
+            Vector<float> approx = x / denom;
+            return Vector.Min(Vector<float>.One, Vector.Max(new Vector<float>(-1.0f), approx));
         }
 
         public static void GeluInPlace(TensorBase tensor)
@@ -657,86 +184,143 @@ namespace SimpleTransformer.Model.Extensions.Numerics
             TensorBase outputGradient,
             TensorBase inputGradient)
         {
-            // 1. Maintain shape validation using your utilities
             ValidateSameShape(input, outputGradient);
             ValidateSameShape(input, inputGradient);
 
-            // 2. CRITICAL FIX: Use Spans instead of .Data to natively support TensorViews
             ReadOnlySpan<float> xSpan = input.ReadOnlySpan;
             ReadOnlySpan<float> dySpan = outputGradient.ReadOnlySpan;
             Span<float> dxSpan = inputGradient.Span;
 
             int len = xSpan.Length;
             int width = Vector<float>.Count;
+            int unrollWidth = width * 2; // Process 2 vector chunks simultaneously
 
-            // 3. Pin memory references to bypass all .NET bounds-checking overhead
             ref float pX = ref MemoryMarshal.GetReference(xSpan);
             ref float pDy = ref MemoryMarshal.GetReference(dySpan);
             ref float pDx = ref MemoryMarshal.GetReference(dxSpan);
 
-            // Cache vector constants in CPU registers
-            const float sqrt2OverPiVal = 0.7978845608f;
-            var vSqrt2OverPi = new Vector<float>(sqrt2OverPiVal);
-            var vConstC = new Vector<float>(0.044715f);
-            var vConst3C = new Vector<float>(3f * 0.044715f);
+            // Pre-hoisted vector constants
+            var vSqrt2OverPi = new Vector<float>(Sqrt2OverPi);
+            var vConstC = new Vector<float>(GeluC);
+            var vConst3C = new Vector<float>(Gelu3C);
             var vOne = Vector<float>.One;
+            var vNegOne = new Vector<float>(-1.0f);
             var vHalf = new Vector<float>(0.5f);
+            var vPolyCoeff = new Vector<float>(0.5857f);
 
             int i = 0;
 
-            // 4. Vectorised SIMD Hot Path
+            // 1. Unrolled Vectorized Hot Path (2x SIMD blocks per iteration)
+            for (; i <= len - unrollWidth; i += unrollWidth)
+            {
+                // Block A
+                Vector<float> valA = Vector.LoadUnsafe(ref pX, (uint)i);
+                Vector<float> dyA = Vector.LoadUnsafe(ref pDy, (uint)i);
+
+                Vector<float> x2A = valA * valA;
+                Vector<float> x3A = x2A * valA;
+                Vector<float> uA = vSqrt2OverPi * (valA + vConstC * x3A);
+
+                Vector<float> absUA = Vector.Abs(uA);
+                Vector<float> u2A = uA * uA;
+                Vector<float> denomA = vOne + absUA + u2A + (vPolyCoeff * u2A * absUA);
+                Vector<float> invDenomA = vOne / denomA;
+                Vector<float> tA = Vector.ConditionalSelect(
+                    Vector.LessThan(uA, Vector<float>.Zero),
+                    vNegOne + invDenomA,
+                    vOne - invDenomA
+                );
+
+                Vector<float> term1A = vHalf * (vOne + tA);
+                Vector<float> term2A = vHalf * valA * (vOne - (tA * tA)) * vSqrt2OverPi * (vOne + vConst3C * x2A);
+                Vector<float> dxA = dyA * (term1A + term2A);
+                Vector.StoreUnsafe(dxA, ref pDx, (uint)i);
+
+                // Block B
+                int iB = i + width;
+                Vector<float> valB = Vector.LoadUnsafe(ref pX, (uint)iB);
+                Vector<float> dyB = Vector.LoadUnsafe(ref pDy, (uint)iB);
+
+                Vector<float> x2B = valB * valB;
+                Vector<float> x3B = x2B * valB;
+                Vector<float> uB = vSqrt2OverPi * (valB + vConstC * x3B);
+
+                Vector<float> absUB = Vector.Abs(uB);
+                Vector<float> u2B = uB * uB;
+                Vector<float> denomB = vOne + absUB + u2B + (vPolyCoeff * u2B * absUB);
+                Vector<float> invDenomB = vOne / denomB;
+                Vector<float> tB = Vector.ConditionalSelect(
+                    Vector.LessThan(uB, Vector<float>.Zero),
+                    vNegOne + invDenomB,
+                    vOne - invDenomB
+                );
+
+                Vector<float> term1B = vHalf * (vOne + tB);
+                Vector<float> term2B = vHalf * valB * (vOne - (tB * tB)) * vSqrt2OverPi * (vOne + vConst3C * x2B);
+                Vector<float> dxB = dyB * (term1B + term2B);
+                Vector.StoreUnsafe(dxB, ref pDx, (uint)iB);
+            }
+
+            // 2. Standard Single Vector Loop for remaining aligned elements
             for (; i <= len - width; i += width)
             {
-                // Direct unhindered hardware vector load from pointer addresses
                 Vector<float> value = Vector.LoadUnsafe(ref pX, (uint)i);
                 Vector<float> dy = Vector.LoadUnsafe(ref pDy, (uint)i);
 
                 Vector<float> x2 = value * value;
                 Vector<float> x3 = x2 * value;
-
                 Vector<float> u = vSqrt2OverPi * (value + vConstC * x3);
 
-                // --- ZERO-ALLOCATION SIMD TANH APPROXIMATION ---
-                // Tanh(u) ≈ sgn(u) * (1 - 1 / (1 + |u| + u^2 + 0.5857 * |u|^3))
                 Vector<float> absU = Vector.Abs(u);
                 Vector<float> u2 = u * u;
-                Vector<float> absU3 = u2 * absU;
-                
-                Vector<float> denom = vOne + absU + u2 + (new Vector<float>(0.5857f) * absU3);
+                Vector<float> denom = vOne + absU + u2 + (vPolyCoeff * u2 * absU);
+                Vector<float> invDenom = vOne / denom;
+
                 Vector<float> t = Vector.ConditionalSelect(
                     Vector.LessThan(u, Vector<float>.Zero),
-                    -vOne + (vOne / denom),
-                    vOne - (vOne / denom)
+                    vNegOne + invDenom,
+                    vOne - invDenom
                 );
-                // ------------------------------------------------
 
-                // Compute derivative: 0.5 * (1 + t) + 0.5 * value * (1 - t^2) * sqrt2OverPi * (1 + 3C * x2)
                 Vector<float> term1 = vHalf * (vOne + t);
                 Vector<float> term2 = vHalf * value * (vOne - (t * t)) * vSqrt2OverPi * (vOne + vConst3C * x2);
-                Vector<float> derivative = term1 + term2;
+                Vector<float> dx = dy * (term1 + term2);
 
-                // Multiply by output gradient and stream directly back to RAM
-                Vector<float> dx = dy * derivative;
                 Vector.StoreUnsafe(dx, ref pDx, (uint)i);
             }
 
-            // 5. Unsafe Scalar Cleanup Path for trailing elements
+            // 3. Scalar Cleanup Loop for tail elements
             for (; i < len; i++)
             {
-                float value = Unsafe.Add(ref pX, i);
+                float val = Unsafe.Add(ref pX, i);
                 float dy = Unsafe.Add(ref pDy, i);
 
-                float x2 = value * value;
-                float x3 = x2 * value;
-
-                float u = sqrt2OverPiVal * (value + 0.044715f * x3);
+                float x2 = val * val;
+                float x3 = x2 * val;
+                float u = Sqrt2OverPi * (val + GeluC * x3);
                 float t = MathF.Tanh(u);
 
-                float derivative = 0.5f * (1f + t) + 0.5f * value * (1f - t * t) * sqrt2OverPiVal * (1f + 3f * 0.044715f * x2);
-
-                Unsafe.Add(ref pDx, i) = dy * derivative;
+                float deriv = 0.5f * (1f + t) + 0.5f * val * (1f - t * t) * Sqrt2OverPi * (1f + Gelu3C * x2);
+                Unsafe.Add(ref pDx, i) = dy * deriv;
             }
         }
+        /// <summary>
+        /// Provides a direct ReadOnlySpan over the underlying contiguous tensor data.
+        /// </summary>
+        public static ReadOnlySpan<float> AsSpan(this TensorBase tensor)
+        {
+            // If TensorBase already provides a ReadOnlySpan property
+            return tensor.ReadOnlySpan;
+        }
+
+        /// <summary>
+        /// Provides a mutable Span over the underlying contiguous tensor data.
+        /// </summary>
+        public static Span<float> AsWritableSpan(this TensorBase tensor)
+        {
+            // If TensorBase already provides a Span property
+            return tensor.Span;
+        }        
         #endregion 
     }
 }

@@ -1,7 +1,4 @@
 using Serilog;
-using System;
-using System.Collections.Generic;
-using System.Threading;
 using System.Threading.Tasks;
 using SimpleTransformer.Model.Extensions;
 using SimpleTransformer.Model.Extensions.Numerics;
@@ -26,10 +23,6 @@ namespace SimpleTransformer.Model
 
         private TensorBase? _lastInput;
 
-        // ThreadLocal storage to reuse dW and dB buffers across Parallel.For execution without allocations
-        private readonly ThreadLocal<Tensor> _threadLocalDW;
-        private readonly ThreadLocal<Tensor?> _threadLocalDB;
-
         public LinearLayer(int inputSize, int outputSize, bool useBias = true)
         {
             _inputSize = inputSize;
@@ -42,8 +35,8 @@ namespace SimpleTransformer.Model
 
             if (_useBias)
             {
-                _bias = new Tensor(1, outputSize);
-                _biasGradient = new Tensor(1, outputSize);
+                _bias = new Tensor(outputSize);
+                _biasGradient = new Tensor(outputSize);
             }
 
             _parameters = _useBias
@@ -56,11 +49,6 @@ namespace SimpleTransformer.Model
                 {
                     new TrainableParameter(_weights, _weightGradient)
                 };
-
-            // Instantiate ThreadLocal scratch buffers for thread safety without dynamic heap allocations
-            _threadLocalDW = new ThreadLocal<Tensor>(() => new Tensor(_outputSize, _inputSize), trackAllValues: true);
-            
-            _threadLocalDB = new ThreadLocal<Tensor?>(() => _useBias ? new Tensor(1, _outputSize) : null, trackAllValues: true);
 
             InitWeights();
         }
@@ -79,7 +67,7 @@ namespace SimpleTransformer.Model
 
             if (_useBias)
             {
-                Array.Clear(_bias!.Data, 0, _bias.Data.Length);
+                Array.Clear(_bias!.Data);
             }
         }
 
@@ -100,9 +88,13 @@ namespace SimpleTransformer.Model
 
             _lastInput = input;
 
+            // Allocate return buffer
             Tensor output = new Tensor(input.Rows, _outputSize);
+
+            // Compute Y = X * W^T directly into output buffer
             TensorMathSimd.MatrixMultiplyRightTransposedInto(input, _weights, output);
 
+            // In-place bias addition
             if (_useBias)
             {
                 AddBiasInPlace(output);
@@ -121,11 +113,13 @@ namespace SimpleTransformer.Model
             int layers = input.Layers;
             Tensor output = new Tensor(layers, input.Rows, _outputSize);
 
+            // Parallelized zero-allocation multiplication across batch items
             Parallel.For(0, layers, b =>
             {
                 TensorBase inputSlice = TensorUtilitiesSimd.GetLayer(input, b);
                 TensorBase outputSlice = TensorUtilitiesSimd.GetLayer(output, b);
 
+                // Multiply straight into output slice view
                 TensorMathSimd.MatrixMultiplyRightTransposedInto(inputSlice, _weights, outputSlice);
 
                 if (_useBias)
@@ -160,7 +154,7 @@ namespace SimpleTransformer.Model
             // 2. dBias = sum(G, axis=0)
             if (_useBias)
             {
-                AccumulateBiasGradient(gradient, _biasGradient!);
+                AccumulateBiasGradient(gradient);
             }
 
             // 3. dX = G * W
@@ -179,58 +173,33 @@ namespace SimpleTransformer.Model
             int layers = gradient.Layers;
 
             Tensor inputGradient = new Tensor(layers, gradient.Rows, _inputSize);
+            object lockObj = new object();
 
-            // 1. Clear thread-local gradient buffers across participating threads before calculation
-            foreach (var localBuffer in _threadLocalDW.Values)
-            {
-                TensorUtilitiesSimd.Fill(localBuffer, 0f);
-            }
-            if (_useBias)
-            {
-                foreach (var localBuffer in _threadLocalDB.Values)
-                {
-                    if (localBuffer != null)
-                        TensorUtilitiesSimd.Fill(localBuffer, 0f);
-                }
-            }
-
-            // 2. Compute slices in parallel without lock contention
             Parallel.For(0, layers, b =>
             {
                 TensorBase gradSlice = TensorUtilitiesSimd.GetLayer(gradient, b);
                 TensorBase inputSlice = TensorUtilitiesSimd.GetLayer(input, b);
                 TensorBase dInputSlice = TensorUtilitiesSimd.GetLayer(inputGradient, b);
 
-                // Re-use pre-allocated thread-local scratchpads (Zero-Allocation)
-                Tensor localDW = _threadLocalDW.Value!;
+                // Thread-local weight gradient buffer to avoid thread contention during accumulation
+                Tensor threadLocalDW = new Tensor(_outputSize, _inputSize);
 
-                // dW_b = gradSlice^T * inputSlice (accumulate into local thread buffer)
-                TensorMathSimd.MatrixMultiplyLeftTransposedAccumulateInto(gradSlice, inputSlice, localDW);
+                // dW_b = gradSlice^T * inputSlice
+                TensorMathSimd.MatrixMultiplyLeftTransposedInto(gradSlice, inputSlice, threadLocalDW);
 
                 // dX_b = gradSlice * weights
                 TensorMathSimd.MatrixMultiplyInto(gradSlice, _weights, dInputSlice);
 
-                if (_useBias)
+                lock (lockObj)
                 {
-                    Tensor localDB = _threadLocalDB.Value!;
-                    AccumulateBiasGradient(gradSlice, localDB);
+                    TensorMathSimd.ElementWiseAddInPlace(_weightGradient, threadLocalDW);
+
+                    if (_useBias)
+                    {
+                        AccumulateBiasGradient(gradSlice);
+                    }
                 }
             });
-
-            // 3. Reduce thread-local gradients into main weight gradient without locking bottleneck
-            foreach (var localDW in _threadLocalDW.Values)
-            {
-                TensorMathSimd.ElementWiseAddInPlace(_weightGradient, localDW);
-            }
-
-            if (_useBias)
-            {
-                foreach (var localDB in _threadLocalDB.Values)
-                {
-                    if (localDB != null)
-                        TensorMathSimd.ElementWiseAddInPlace(_biasGradient!, localDB);
-                }
-            }
 
             return inputGradient;
         }
@@ -244,39 +213,37 @@ namespace SimpleTransformer.Model
             }
         }
 
-        #region Helper Methods (Optimized Memory Spans)
+        #region Helper Methods
 
         private void AddBiasInPlace(TensorBase target)
         {
             int rows = target.Rows;
             int cols = target.Cols;
-            ReadOnlySpan<float> biasSpan = _bias!.Data.AsSpan(0, _outputSize);
-            Span<float> targetSpan = target.Data.AsSpan();
+            float[] biasData = _bias!.Data;
 
             for (int r = 0; r < rows; r++)
             {
-                int rowOffset = target.Offset + (r * target.Stride);
-                Span<float> rowSpan = targetSpan.Slice(rowOffset, cols);
-                
-                // Uses SIMD vector addition under the hood if available
-                TensorMathSimd.AddSpanInPlace(rowSpan, biasSpan);
+                int rowOffset = r * target.Stride;
+                for (int c = 0; c < cols; c++)
+                {
+                    target.Data[target.Offset + rowOffset + c] += biasData[c];
+                }
             }
         }
 
-        private void AccumulateBiasGradient(TensorBase gradient, Tensor targetBiasGrad)
+        private void AccumulateBiasGradient(TensorBase gradient)
         {
             int rows = gradient.Rows;
             int cols = gradient.Cols;
-            ReadOnlySpan<float> gradData = gradient.Data.AsSpan();
-            Span<float> biasGradSpan = targetBiasGrad.Data.AsSpan(targetBiasGrad.Offset, cols);
+            float[] biasGrad = _biasGradient!.Data;
 
             for (int r = 0; r < rows; r++)
             {
-                int rowOffset = gradient.Offset + (r * gradient.Stride);
-                ReadOnlySpan<float> rowSpan = gradData.Slice(rowOffset, cols);
-
-                // Uses SIMD vector addition under the hood if available
-                TensorMathSimd.AddSpanInPlace(biasGradSpan, rowSpan);
+                int rowOffset = r * gradient.Stride;
+                for (int c = 0; c < cols; c++)
+                {
+                    biasGrad[c] += gradient.Data[gradient.Offset + rowOffset + c];
+                }
             }
         }
 

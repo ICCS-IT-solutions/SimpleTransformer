@@ -7,7 +7,7 @@ namespace SimpleTransformer.Model.Extensions.Numerics
 {
     public static partial class TensorUtilitiesSimd
     {
-#region Validation and Shape Utilities
+        #region Validation and Shape Utilities
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static void ValidateSameShape(TensorBase a, TensorBase b)
