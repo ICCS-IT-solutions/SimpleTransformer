@@ -105,5 +105,14 @@ namespace SimpleTransformer.Model
             TensorUtilitiesSimd.CopyTo(this, clone);
             return clone;
         }
+        public override void Dispose()
+        {
+            // Clear any sensitive data in the buffer if needed
+            if (Data != null)
+            {
+                Array.Clear(Data, 0, Data.Length);
+            }
+            base.Dispose();
+        }
     }
 }

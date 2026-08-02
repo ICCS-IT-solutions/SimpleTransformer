@@ -151,15 +151,23 @@ namespace SimpleTransformer.Model
             Log.Information($"Backward pass completed in {backwardWatch.ElapsedMilliseconds} ms.");
         }
 
-        public (int[] tokens, TensorBase logits, TensorBase probabilities, TensorBase hiddenState) Predict(TensorBase input)
+        public (int nextTokenId, int[] allTokenIds, TensorBase logits, TensorBase probabilities, TensorBase hiddenState) Predict(TensorBase input)
         {
+            // 1. Run forward pass
             var (logits, hiddenState) = Forward(input);
 
+            // 2. Softmax logits to get probabilities
             var probabilities = TensorUtilitiesSimd.SoftmaxRows((Tensor)logits);
 
-            return (TokenizationUtilities.ArgMax(probabilities), logits, probabilities, hiddenState);
-        }
+            // 3. Get predicted token IDs for all positions
+            int[] allTokenIds = TokenizationUtilities.ToTokenIds(probabilities);
 
+            // 4. The actual NEXT token is the ArgMax of the LAST row
+            int nextTokenId = allTokenIds[allTokenIds.Length - 1];
+
+            return (nextTokenId, allTokenIds, logits, probabilities, hiddenState);
+        }
+        
         public void ZeroGradients()
         {
             _outputProjection.ZeroGradients();

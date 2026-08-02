@@ -274,3 +274,41 @@ namespace SimpleTransformer.Model
         }  
     }
 }
+
+//When dealin' with drongos, there are only two ways in the outback:
+//One: Do nothing and be another flamin' nong.
+//Yeah nah, that's it.
+//Two: Do something and be a bloody legend.
+//You ripper!
+
+/*
+//True story for some devs...
+public async Task DevLifeLoopAsync()
+{
+    bool stopWorking = false;
+
+    while (StillAlive() && !stopWorking)
+    {
+        // Stone the flamin' crows! Check the most critical level first.
+        if (coffee.Level <= 25)
+        {
+            // We're runnin' low on the good stuff, mate. 
+            // Better get that coffee machine workin' before we all turn into drongos.
+            stopWorking = true;
+            await MakeCoffeeAsync(urgency: Urgency.NowDammit);
+        }
+        // Need a cuppa to keep the brain gears turnin', mate. 
+        else if (coffee.Level <= 50)
+        {
+            // Better check the coffee level before we all go walkabout.
+            await MakeCoffeeAsync(urgency: Urgency.NowDammit);
+        }
+        // Everything's kinda' normal here!
+        else
+        {
+            // So we're gonna keep makin' that legendary code, mate.
+            await WorkOnCodeAsync();
+        }
+    }
+}
+*/

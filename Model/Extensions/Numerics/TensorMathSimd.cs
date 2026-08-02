@@ -53,6 +53,7 @@ namespace SimpleTransformer.Model.Extensions.Numerics
                 }
             }
         }
+        
         #endregion
         
         #region Special functions

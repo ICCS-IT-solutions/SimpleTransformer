@@ -50,8 +50,10 @@ namespace SimpleTransformer.Api.Endpoints.Services
             var samples = CreateTrainingSamples(req.InputText);
             var miniBatches = CreateMiniBatches(samples);
 
+            var totalEpochs = startEpoch + req.Config?.Epochs ?? 10; // Default to 10 epochs if not specified
+
             // 2. Training loop
-            for (int epoch = startEpoch; epoch < req.Config?.Epochs; epoch++)
+            for (int epoch = startEpoch; epoch < totalEpochs; epoch++)
             {
                 float epochLoss = 0f;
                 foreach (var batch in miniBatches)
@@ -61,12 +63,12 @@ namespace SimpleTransformer.Api.Endpoints.Services
 
                 epochLoss /= miniBatches.Count;
 
-                Log.Information("Epoch {Epoch}: Loss={Loss:F6}", epoch + 1, epochLoss);
+                Log.Information($"Epoch {epoch + 1}: Loss={epochLoss:F6}");
 
-                // Save checkpoint periodically via TransformerModel
-                if ((epoch + 1) % 10 == 0 || epoch == req.Config.Epochs - 1)
+                // Save checkpoint periodically via TransformerModel. Every 5 epochs or on the last epoch, save a checkpoint
+                if ((epoch + 1) % 5 == 0 || epoch == req.Config.Epochs - 1)
                 {
-                    string checkpointFileName = $"checkpoint-{epoch}-loss-{epochLoss:F6}.bin";
+                    string checkpointFileName = $"checkpoint-{epoch + 1}-loss-{epochLoss:F6}.bin";
                     
                     await using var stream = File.Create(checkpointFileName);
                     _model.SaveCheckpoint(stream, epoch, epochLoss);

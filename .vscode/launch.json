@@ -11,8 +11,7 @@
             "program": "${workspaceFolder}/bin/Debug/net9.0/SimpleTransformer.dll",
             "cwd": "${workspaceFolder}",
             "console": "externalTerminal",
-            "request": "launch",
-            "requireExactSource": false
+            "request": "launch"
         },
         {
             "name": "Attach to process",

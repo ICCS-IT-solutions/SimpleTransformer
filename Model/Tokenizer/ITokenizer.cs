@@ -7,6 +7,7 @@ namespace SimpleTransformer.Model.Tokenizer
 {
     public interface ITokenizer
     {
+        int EosTokenId { get; }
         int[] Encode(string text);
 
         string Decode(ReadOnlySpan<int> tokens);
@@ -18,6 +19,7 @@ namespace SimpleTransformer.Model.Tokenizer
     {
         private readonly Dictionary<string, int> _tokenToId;
         private readonly Dictionary<int, string> _idToToken;
+        private readonly Vocabulary _voc;
         public int PadTokenId { get; }
         public int UnknownTokenId { get; }
         public int BosTokenId { get; }
@@ -26,6 +28,7 @@ namespace SimpleTransformer.Model.Tokenizer
         public int VocabularySize => _tokenToId.Count;
         public SimpleTokenizer(Vocabulary vocabulary)
         {
+            _voc = vocabulary;
             _tokenToId = (Dictionary<string, int>)vocabulary.TokenToId;
             _idToToken = (Dictionary<int, string>)vocabulary.IdToToken;
 

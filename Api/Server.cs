@@ -69,10 +69,26 @@ namespace SimpleTransformer.Api
                         FeedForwardSize = 3072,
                         MaxSequenceLength = 128,
                     };
-                    var model = new TransformerModel(config);
-                    Log.Information($"Transformer model loaded in {watch.ElapsedMilliseconds}ms.");
+                    Log.Information("Loading model weights and configuration...");
+                    watch.Restart();
+
+                    var weightsFile = "model_weights.bin";
+
+                    if (!File.Exists(weightsFile))
+                    {
+                        throw new FileNotFoundException($"Model checkpoint file not found at: {Path.GetFullPath(weightsFile)}");
+                    }
+
+                    // 1. Open the file stream safely
+                    using var weightsFileStream = File.OpenRead(weightsFile);
+
+                    // 2. Call the static factory and capture the instantiated model
+                    var (model, epoch, loss) = TransformerModel.LoadCheckpoint(weightsFileStream);
+
+                    Log.Information($"Model, weights, and configuration loaded in {watch.ElapsedMilliseconds}ms. (Epoch: {epoch}, Loss: {loss:F4})");
                     watch.Stop();
-                    return model;  
+
+                    return model;
                 });
 
                 //Services using the model should be created after the model is ready.

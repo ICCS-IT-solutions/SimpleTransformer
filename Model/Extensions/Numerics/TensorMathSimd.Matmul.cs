@@ -282,6 +282,76 @@ namespace SimpleTransformer.Model.Extensions.Numerics
             });
         }
 
+        public static void MatrixMultiply2DSliceAccumulate(
+            float[] arrayA, int offsetA, int aRows, int aCols, int aColsPhysical, bool transposeA,
+            float[] arrayB, int offsetB, int bRows, int bCols, int bColsPhysical, bool transposeB,
+            float[] arrayResult, int offsetResult, int resRows, int resCols)
+        {
+            int m = aRows;
+            int n = bCols;
+            int k = aCols;
+
+            ReadOnlySpan<float> spanA = arrayA.AsSpan(offsetA);
+            ReadOnlySpan<float> spanB = arrayB.AsSpan(offsetB);
+            Span<float> spanResult = arrayResult.AsSpan(offsetResult, m * n);
+
+            Span<float> tempBufferA = stackalloc float[k];
+            Span<float> tempBufferB = stackalloc float[k];
+
+            for (int i = 0; i < m; i++)
+            {
+                int resultRowOffset = i * n;
+
+                if (!transposeA)
+                {
+                    // Direct slice without stackalloc assignment
+                    ReadOnlySpan<float> rowA = spanA.Slice(i * aColsPhysical, k);
+                    ComputeRowOutputAccumulate(rowA, spanB, spanResult, resultRowOffset, tempBufferB, n, k, bColsPhysical, transposeB);
+                }
+                else
+                {
+                    // Fill local buffer and pass directly
+                    for (int e = 0; e < k; e++)
+                    {
+                        tempBufferA[e] = spanA[e * aColsPhysical + i];
+                    }
+                    ComputeRowOutputAccumulate(tempBufferA, spanB, spanResult, resultRowOffset, tempBufferB, n, k, bColsPhysical, transposeB);
+                }
+            }
+
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            static void ComputeRowOutputAccumulate(
+                ReadOnlySpan<float> rowA,
+                ReadOnlySpan<float> spanB,
+                Span<float> spanResult,
+                int resultRowOffset,
+                Span<float> tempBufferB,
+                int n, int k, int bColsPhysical,
+                bool transposeB)
+            {
+                if (transposeB)
+                {
+                    for (int j = 0; j < n; j++)
+                    {
+                        ReadOnlySpan<float> rowB = spanB.Slice(j * k, k);
+                        // Accumulate += instead of overwrite =
+                        spanResult[resultRowOffset + j] += DotSimd(rowA, rowB);
+                    }
+                }
+                else
+                {
+                    for (int j = 0; j < n; j++)
+                    {
+                        for (int e = 0; e < k; e++)
+                        {
+                            tempBufferB[e] = spanB[e * bColsPhysical + j];
+                        }
+                        // Accumulate += instead of overwrite =
+                        spanResult[resultRowOffset + j] += DotSimd(rowA, tempBufferB);
+                    }
+                }
+            }
+        }
         private static void MatrixMultiply2DSlice(
             float[] arrayA, int offsetA, int aRows, int aCols, int aColsPhysical, bool transposeA,
             float[] arrayB, int offsetB, int bRows, int bCols, int bColsPhysical, bool transposeB,

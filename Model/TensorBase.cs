@@ -1,6 +1,6 @@
 namespace SimpleTransformer.Model
 {
-    public abstract class TensorBase
+    public abstract class TensorBase : IDisposable
     {
         public abstract float this[int index] { get; set; }
         public abstract float this[int row, int col] { get; set; }
@@ -52,6 +52,11 @@ namespace SimpleTransformer.Model
                 total *= Shape[i];
             }
             return total;
+        }
+
+        public virtual void Dispose()
+        {
+            // Override in derived classes to release resources if needed.
         }
 
         public abstract TensorBase Clone();
