@@ -59,6 +59,7 @@ namespace SimpleTransformer.Api.Endpoints.Services
                 foreach (var batch in miniBatches)
                 {
                     epochLoss += _model.TrainStep(batch.Inputs, batch.Targets);
+                    Log.Information($"Loss this batch: {epochLoss:F6}");
                 }
 
                 epochLoss /= miniBatches.Count;

@@ -43,18 +43,35 @@ namespace SimpleTransformer.Model
 
         private TensorBase Forward2D(TensorBase input)
         {
-            using TensorBase expanded = _expand.Forward(input);
-            using var activated = _activation.Forward(expanded);
-            return _project.Forward(activated);
+            var forwardWatch = Stopwatch.StartNew();
+            Log.Information("[FeedForwardLayer.Forward] Started forward propagation...");
+
+            // 1. Linear expansion: [T, C] -> [T, 4C]
+            TensorBase x = _expand.Forward(input);
+            Log.Information($"[FeedForwardLayer.Forward] Finished linear expansion in {forwardWatch.ElapsedMilliseconds} ms.");
+            
+            // 2. GELU activation in-place / optimized
+            forwardWatch.Restart();
+            x = _activation.Forward(x);
+            Log.Information($"[FeedForwardLayer.Forward] Finished gelu activation in {forwardWatch.ElapsedMilliseconds} ms.");
+            
+            // 3. Linear projection: [T, 4C] -> [T, C]
+            forwardWatch.Restart();
+            x = _project.Forward(x);
+            Log.Information($"[FeedForwardLayer.Forward] Finished linear projection in {forwardWatch.ElapsedMilliseconds} ms.");
+            forwardWatch.Stop();
+
+            return x;
         }
 
         private TensorBase ForwardBatch3D(TensorBase input)
         {
             // Pass the 3D batch tensor directly through the child layers
             // (Assuming child layers handle Rank-3 tensors internally)
-            using TensorBase expanded = _expand.Forward(input);
-            using var activated = _activation.Forward(expanded);
-            return _project.Forward(activated);
+            TensorBase x = _expand.Forward(input);
+            x = _activation.Forward(x);
+            x = _project.Forward(x);
+            return x;
         }
 
         public TensorBase Backward(TensorBase gradient)
@@ -69,16 +86,18 @@ namespace SimpleTransformer.Model
 
         private TensorBase Backward2D(TensorBase gradient)
         {
-            using TensorBase x = _project.Backward(gradient);
-            using var projection = _activation.Backward(x);
-            return _expand.Backward(x);           
+            TensorBase x = _project.Backward(gradient);
+            x = _activation.Backward(x);
+            x = _expand.Backward(x);           
+            return x;
         }
 
         private TensorBase BackwardBatch3D(TensorBase gradient)
         {
-            using TensorBase x = _project.Backward(gradient);
-            using var projection = _activation.Backward(x);
-            return _expand.Backward(x); 
+            TensorBase x = _project.Backward(gradient);
+            x = _activation.Backward(x);
+            x = _expand.Backward(x);
+            return x;
         }
 
         public void ZeroGradients()

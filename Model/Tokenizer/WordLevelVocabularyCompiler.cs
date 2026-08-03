@@ -2,8 +2,12 @@ using SimpleTransformer.Model.Extensions;
 
 namespace SimpleTransformer.Model.Tokenizer
 {
-    public class VocabularyCompiler
+    public class WordLevelVocabularyCompiler : IVocabularyCompiler
     {
+        public VocabularyCompilationResult BuildFromRawTextFile(string src, int targetVocabSize = 0)
+        {
+            return BuildFromRawTextFiles(new[] { src }, targetVocabSize);
+        }
         private static readonly Dictionary<string, int> _specialTokens = new()
         {
             [SpecialTokens.Pad] = 0,
@@ -26,7 +30,7 @@ namespace SimpleTransformer.Model.Tokenizer
             return new Vocabulary(vocabulary);
         }
 
-        public static Vocabulary BuildFromRawTextFiles(IEnumerable<string> srcFiles)
+        public VocabularyCompilationResult BuildFromRawTextFiles(IEnumerable<string> srcFiles, int targetVocabSize = 0)
         {
             var vocabulary = new Dictionary<string, int>(_specialTokens);
             int nextId = vocabulary.Count;
@@ -40,7 +44,9 @@ namespace SimpleTransformer.Model.Tokenizer
                 CompileTokens(text, vocabulary, ref nextId);
             }
 
-            return new Vocabulary(vocabulary);
+            return new VocabularyCompilationResult(
+                new Vocabulary(vocabulary),
+                null);
         }
 
        private static void CompileTokens(

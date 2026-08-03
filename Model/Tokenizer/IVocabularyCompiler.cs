@@ -1,10 +1,15 @@
 namespace SimpleTransformer.Model.Tokenizer
 {
-
-    //Not currently in use, but may very well be when I create other vocabulary compilers.
     public interface IVocabularyCompiler
     {
-        public Vocabulary BuildFromRawTextFiles(IEnumerable<string> srcFiles);
-        public Vocabulary BuildFromRawTextFile(string src);
+        /// <summary>
+        /// Compiles a vocabulary (and optional algorithm artifacts) from a single source file.
+        /// </summary>
+        VocabularyCompilationResult BuildFromRawTextFile(string src, int targetVocabSize = 5000);
+
+        /// <summary>
+        /// Compiles a vocabulary (and optional algorithm artifacts) from multiple source files.
+        /// </summary>
+        VocabularyCompilationResult BuildFromRawTextFiles(IEnumerable<string> srcFiles, int targetVocabSize = 5000);
     }
 }

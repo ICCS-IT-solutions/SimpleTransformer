@@ -16,8 +16,6 @@ namespace SimpleTransformer.Api
 
                 builder.Host.UseSerilog();
 
-
-
                 builder.WebHost.ConfigureKestrel(options =>
                 {
                     options.ListenAnyIP(5000);
@@ -40,6 +38,8 @@ namespace SimpleTransformer.Api
                     return loader.LoadFromFile(vocabularyFile);
                 });
 
+                builder.Services.AddSingleton<IVocabularyCompiler, SentencePieceVocabularyCompiler>();
+
                 
                 builder.Services.AddScoped<VocabularyService>();
                 //Will replace this with a proper transient or loaded vocab from a json file once I have one.
@@ -47,7 +47,7 @@ namespace SimpleTransformer.Api
                 builder.Services.AddSingleton<ITokenizer>(provider =>
                 {
                     var vocab = provider.GetRequiredService<Vocabulary>();
-                    return new SimpleTokenizer(vocab);
+                    return new SentencePieceTokenizer(vocab);
                 });
                 builder.Services.AddSingleton<TransformerModel>(provider =>
                 {
@@ -60,15 +60,9 @@ namespace SimpleTransformer.Api
 
                     watch.Restart();
                     Log.Information("Building transformer model...");
-                    var config = new TransformerConfig
-                    {
-                        VocabSize = vocabulary.Count,
-                        EmbeddingSize = 768,
-                        NumLayers = 12,
-                        NumHeads = 12,
-                        FeedForwardSize = 3072,
-                        MaxSequenceLength = 128,
-                    };
+                    var config = TransformerConfig.MediumConfig; // Use the MediumConfig for a balance between performance and memory usage
+                    var vocabSize = vocabulary.Count;
+                    config.UpdateFrom(vocabSize);
                     Log.Information("Loading model weights and configuration...");
                     watch.Restart();
 
@@ -76,19 +70,25 @@ namespace SimpleTransformer.Api
 
                     if (!File.Exists(weightsFile))
                     {
-                        throw new FileNotFoundException($"Model checkpoint file not found at: {Path.GetFullPath(weightsFile)}");
+                        // If the weights file does not exist, we can instantiate a new model with random weights.
+                        Log.Warning($"Weights file '{weightsFile}' not found. Instantiating a new model with random weights.");
+                        var model = new TransformerModel(config, new TrainingConfig());
+                        Log.Information($"Model instantiated in {watch.ElapsedMilliseconds}ms.");
+                        return model;
                     }
+                    else
+                    {
+                        // 1. Open the file stream safely
+                        using var weightsFileStream = File.OpenRead(weightsFile);
 
-                    // 1. Open the file stream safely
-                    using var weightsFileStream = File.OpenRead(weightsFile);
+                        // 2. Call the static factory and capture the instantiated model
+                        var (model, epoch, loss) = TransformerModel.LoadCheckpoint(weightsFileStream);
 
-                    // 2. Call the static factory and capture the instantiated model
-                    var (model, epoch, loss) = TransformerModel.LoadCheckpoint(weightsFileStream);
+                        Log.Information($"Model, weights, and configuration loaded in {watch.ElapsedMilliseconds}ms. (Epoch: {epoch}, Loss: {loss:F4})");
+                        watch.Stop();
 
-                    Log.Information($"Model, weights, and configuration loaded in {watch.ElapsedMilliseconds}ms. (Epoch: {epoch}, Loss: {loss:F4})");
-                    watch.Stop();
-
-                    return model;
+                        return model;
+                    }
                 });
 
                 //Services using the model should be created after the model is ready.

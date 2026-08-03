@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.Encodings.Web;
 using System.Text.Json;
 using Microsoft.AspNetCore.Mvc;
 using SimpleTransformer.Api.Requests;
@@ -12,11 +13,13 @@ namespace SimpleTransformer.Api.Endpoints.Services
     public class VocabularyService
     {
         private readonly ITokenizer _tokenizer;
+        private readonly IVocabularyCompiler _vocabularyCompiler;
         private readonly TransformerModel _model;
 
-        public VocabularyService(ITokenizer tokenizer, TransformerModel model)
+        public VocabularyService(ITokenizer tokenizer, IVocabularyCompiler vocabularyCompiler, TransformerModel model)
         {
             _tokenizer = tokenizer;
+            _vocabularyCompiler = vocabularyCompiler;
             _model = model;
         }
 
@@ -58,17 +61,18 @@ namespace SimpleTransformer.Api.Endpoints.Services
             //Compile a single file
             if (req.Files.Count == 1)
             {
-                var vocabulary = VocabularyCompiler.BuildFromRawTextFile(req.Files[0]);
+                var vocabularyResult = _vocabularyCompiler.BuildFromRawTextFile(req.Files[0]);
 
                 var response = new VocabularyCompilationResponse
                 {
-                    Vocabulary = vocabulary
+                    Vocabulary = vocabularyResult.Vocabulary
                 };
                 var vocabJson = JsonSerializer.Serialize(
-                    vocabulary.TokenToId,
+                    vocabularyResult.Vocabulary.TokenToId,
                     new JsonSerializerOptions 
                     { 
-                        WriteIndented = true 
+                        WriteIndented = true,
+                        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
                     });
                 await File.WriteAllTextAsync("vocabulary.json", vocabJson);
                 return new ApiResponse<VocabularyCompilationResponse>
@@ -83,17 +87,18 @@ namespace SimpleTransformer.Api.Endpoints.Services
             if (req.Files.Count > 1)
             {
                 //Compile multiple files
-                var vocabulary = VocabularyCompiler.BuildFromRawTextFiles(req.Files);
+                var vocabularyResult = _vocabularyCompiler.BuildFromRawTextFiles(req.Files);
 
                 var response = new VocabularyCompilationResponse
                 {
-                    Vocabulary = vocabulary
+                    Vocabulary = vocabularyResult.Vocabulary
                 };
                 var vocabJson = JsonSerializer.Serialize(
-                    vocabulary.TokenToId,
+                    vocabularyResult.Vocabulary.TokenToId,
                     new JsonSerializerOptions 
                     { 
-                        WriteIndented = true 
+                        WriteIndented = true,
+                        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
                     });
                 await File.WriteAllTextAsync("vocabulary.json", vocabJson);
                 return new ApiResponse<VocabularyCompilationResponse>

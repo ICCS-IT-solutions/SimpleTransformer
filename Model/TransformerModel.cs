@@ -48,9 +48,8 @@ namespace SimpleTransformer.Model
         private ILossFunction _loss = null!;
         private IOptimizer _optimizer = null!;
         
-        public static TransformerConfig DefaultConfig => new TransformerConfig
+        public static TransformerConfig DefaultConfig => new()
         {
-
             VocabSize = 30522, // Common vocabulary size for BERT-like models
             EmbeddingSize = 768, // Common embedding size for BERT-like models
             NumLayers = 12, // Common number of layers for BERT-like models
@@ -58,6 +57,30 @@ namespace SimpleTransformer.Model
             FeedForwardSize = 3072, // Common feed-forward size for BERT-like models
             MaxSequenceLength = 512, // Common maximum sequence length for BERT-like models
         };
+        
+
+        //For around 8GB of memory usage.
+        public static TransformerConfig MediumConfig => new()
+        {
+            VocabSize = 30522,           
+            EmbeddingSize = 512,         // Increased model capacity while remaining well under 8 GB
+            NumLayers = 8,               // 8 Transformer layers
+            NumHeads = 8,                // 512 / 8 = 64 head dim (Perfect alignment for AVX2 SIMD)
+            FeedForwardSize = 2048,      // 4x EmbeddingSize standard ratio
+            MaxSequenceLength = 256,     // 256 tokens gives a strong context window
+        };
+        //For around 4GB of memory usage.
+        public static TransformerConfig SmallConfig => new()
+        {
+            VocabSize = 30522,           
+            EmbeddingSize = 256,         // Reduced embedding size for smaller memory footprint
+            NumLayers = 4,               // 4 Transformer layers
+            NumHeads = 4,                // 256 / 4 = 64 head dim (Perfect alignment for AVX2 SIMD)
+            FeedForwardSize = 1024,      // 4x EmbeddingSize standard ratio
+            MaxSequenceLength = 128,     // Shorter context window for smaller models
+        };
+
+
         private readonly List<ILayer> _layers = new();
         public TransformerConfig Config { get; }
         public TrainingConfig TrainingConfig { get; }
@@ -65,11 +88,17 @@ namespace SimpleTransformer.Model
         {
             Config = config ?? DefaultConfig;
             TrainingConfig = trainingConfig ?? new TrainingConfig();
+            //Second pass configuration validation to ensure nothing accidentally slips through first-pass validation in the config class.
             ValidateConfig();
             Log.Information("Configuration is valid. Proceeding...");
 
             BuildModel();
             Log.Information("Transformer model ready to be loaded.");
+        }
+
+        public TransformerModel CreateFromConfig(TransformerConfig? config, TrainingConfig? trainingConfig)
+        {
+            return new TransformerModel(config, trainingConfig);
         }
 
         public static async Task<TransformerModel> FromCheckpointAsync(string filepath, TrainingService trainingService)
@@ -85,11 +114,11 @@ namespace SimpleTransformer.Model
         {
             Log.Information("Starting forward pass through the transformer model...");
             var forwardWatch = Stopwatch.StartNew();
-           
-            _embedding.ZeroGradients();
+
+            // REMOVED: _embedding.ZeroGradients(); 
 
             DiagonisticUtilities.AssertNoNaN(input, "Input contains NaN.");
-            TensorBase x = _embedding.Forward(input); //Why now is this NaN? <scratch target="head" />
+            TensorBase x = _embedding.Forward(input);
 
             DiagonisticUtilities.AssertNoNaN(x, "Embedding contains NaN.");
             x = _position.Forward(x);
@@ -102,15 +131,13 @@ namespace SimpleTransformer.Model
                 x = layer.Forward(x);
                 Log.Information($"Forward pass through layer {layerIndex} ({layer.GetType().Name}) completed in {layerWatch.ElapsedMilliseconds} ms.");
                 layerWatch.Stop();
-                DiagonisticUtilities.AssertNoNaN(x, $"Transformer layer {nameof(layer)} contains NaN.");
+                DiagonisticUtilities.AssertNoNaN(x, $"Transformer layer {layerIndex} contains NaN.");
             }
 
             TensorBase hiddenState = x;
-
             DiagonisticUtilities.AssertNoNaN(hiddenState, "Hidden state contains NaN.");
 
             TensorBase logits = _outputProjection.Forward(hiddenState);
-
             DiagonisticUtilities.AssertNoNaN(logits, "Logits contains NaN.");
 
             forwardWatch.Stop();
@@ -145,7 +172,7 @@ namespace SimpleTransformer.Model
             gradient = _embedding.Backward(gradient);
             DiagonisticUtilities.AssertNoNaN(gradient, "Gradient after backward pass through embedding contains NaN.");
 
-            _embedding.ClipGradients(1.0f);
+            // REMOVED: _embedding.ClipGradients(1.0f); -> Handled globally in TrainStep!
 
             backwardWatch.Stop();
             Log.Information($"Backward pass completed in {backwardWatch.ElapsedMilliseconds} ms.");
@@ -446,35 +473,66 @@ namespace SimpleTransformer.Model
         {
             ZeroGradients();
 
-            (TensorBase prediction, _) = Forward(inputs);
+            TensorBase? prediction = null;
+            TensorBase? auxOutput = null;
+            TensorBase? gradient = null;
 
-            float loss = _loss.Forward(prediction, expectedOutputs);
-            TensorBase gradient = _loss.Backward(prediction, expectedOutputs);
-
-            Backward(gradient);
-
-            // 1. Clip ALL parameter gradients globally
-            ClipGradients(1.0f);
-
-            // 2. Verify no gradients contain NaN before updating weights
-            foreach (var p in Parameters)
+            try
             {
-                if (p.Gradient != null)
+                // 1. Forward Pass
+                (prediction, auxOutput) = Forward(inputs);
+
+                // 2. Compute Loss & Initial Backprop Gradient
+                float loss = _loss.Forward(prediction, expectedOutputs);
+                gradient = _loss.Backward(prediction, expectedOutputs);
+
+                // 3. Backpropagate through Model
+                Backward(gradient);
+
+                // 4. Clip ALL parameter gradients globally
+                ClipGradients(1.0f);
+
+                // 5. Verify no gradients contain NaN before updating weights
+                foreach (var p in Parameters)
                 {
-                    DiagonisticUtilities.AssertNoNaN(p.Gradient, "Gradient contains NaN prior to optimizer step.");
+                    if (p.Gradient != null)
+                    {
+                        DiagonisticUtilities.AssertNoNaN(p.Gradient, "Gradient contains NaN prior to optimizer step.");
+                    }
+                }
+
+                // 6. Step optimizer
+                _optimizer.Step(Parameters);
+
+                // 7. Verify no weights became NaN after optimizer step
+                foreach (var p in Parameters)
+                {
+                    DiagonisticUtilities.AssertNoNaN(p.Value, "Model weight matrix poisoned by optimizer step.");
+                }
+
+                return loss;
+            }
+            finally
+            {
+                // Clean up transient forward & loss tensors for this step
+                DisposeIfDisposable(prediction);
+                DisposeIfDisposable(auxOutput);
+
+                // If _loss.Backward returns a cached tensor managed internally by _loss, 
+                // DO NOT dispose it here. Otherwise, dispose if it's transient:
+                if (gradient != null && !_loss.ManagesGradientBuffer) 
+                {
+                    DisposeIfDisposable(gradient);
                 }
             }
+        }
 
-            // 3. Step optimizer
-            _optimizer.Step(Parameters);
-
-            // 4. Verify no weights became NaN after optimizer step
-            foreach (var p in Parameters)
+        private static void DisposeIfDisposable(object? obj)
+        {
+            if (obj is IDisposable disposable)
             {
-                DiagonisticUtilities.AssertNoNaN(p.Value, "Model weight matrix poisoned by optimizer step.");
+                disposable.Dispose();
             }
-
-            return loss;
         }
 
         public async Task<float> TrainStepAsync(TensorBase inputs, TensorBase expectedOutputs)

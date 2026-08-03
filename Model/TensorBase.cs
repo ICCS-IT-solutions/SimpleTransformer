@@ -1,3 +1,5 @@
+using Microsoft.CodeAnalysis.CSharp.Syntax;
+
 namespace SimpleTransformer.Model
 {
     public abstract class TensorBase : IDisposable
@@ -53,6 +55,28 @@ namespace SimpleTransformer.Model
             }
             return total;
         }
+
+        //Needs work to make compatible with my existing code. The concept is sound and can help reduce memory usage if done right.
+
+        // public virtual TensorBase Reshape(params int[] newShape)
+        // {
+        //     int newTotalElements = 1;
+        //     for (int i = 0; i < newShape.Length; i++)
+        //     {
+        //         if (newShape[i] <= 0) 
+        //             throw new ArgumentException("Dimensions must be positive.");
+        //         newTotalElements *= newShape[i];
+        //     }
+
+        //     if (newTotalElements != TotalElements)
+        //     {
+        //         throw new InvalidOperationException(
+        //             $"Cannot reshape tensor of size {TotalElements} into shape [{string.Join(", ", newShape)}] (total size {newTotalElements}).");
+        //     }
+
+        //     // Return a new TensorBase wrapper that references the SAME memory buffer (_data)
+        //     return new TensorView(this.DataBuffer, newShape);
+        // }
 
         public virtual void Dispose()
         {
