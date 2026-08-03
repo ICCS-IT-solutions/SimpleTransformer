@@ -85,41 +85,56 @@ namespace SimpleTransformer.Model
 
         public TensorBase Forward(TensorBase input)
         {
+            return input.Rank switch
+            {
+                2 => ForwardSequence(input),
+                3 => ForwardBatch(input),
+                _ => throw new ArgumentException("Linear layer expects rank 2 or rank 3.")
+            };
+        }
+
+        private TensorBase ForwardSequence(TensorBase input)
+        {
             if (input.Cols != _inputSize)
                 throw new ArgumentException($"Expected {_inputSize} columns, got {input.Cols}.");
 
             _lastInput = input;
 
-            // If 2D (e.g. single prompt evaluation), process directly
-            if (input.Rank == 2)
-            {
-                Tensor output2D = new Tensor(input.Rows, _outputSize);
-                TensorMathSimd.MatrixMultiplyRightTransposedInto(input, _weights, output2D);
-                
-                if (_useBias)
-                    AddBiasInPlace(output2D);
+            Tensor output = new Tensor(input.Rows, _outputSize);
+            TensorMathSimd.MatrixMultiplyRightTransposedInto(input, _weights, output);
 
-                return output2D;
+            if (_useBias)
+            {
+                AddBiasInPlace(output);
             }
 
-            // If 3D (Rank 3: [Batch/Layers, SequenceLength, InputSize]), process full tensor in 1 go
-            if (input.Rank == 3)
+            return output;
+        }
+
+        private TensorBase ForwardBatch(TensorBase input)
+        {
+            if (input.Cols != _inputSize)
+                throw new ArgumentException($"Expected {_inputSize} columns, got {input.Cols}.");
+
+            _lastInput = input;
+
+            int layers = input.Layers;
+            Tensor output = new Tensor(layers, input.Rows, _outputSize);
+
+            Parallel.For(0, layers, b =>
             {
-                Tensor output3D = new Tensor(input.Layers, input.Rows, _outputSize);
+                TensorBase inputSlice = TensorUtilitiesSimd.GetLayer(input, b);
+                TensorBase outputSlice = TensorUtilitiesSimd.GetLayer(output, b);
 
-                // 1. Direct 3D Batch GEMM using shared 2D weight matrix
-                TensorMathSimd.MatrixMultiplyRightTransposedInto(input, _weights, output3D);
+                TensorMathSimd.MatrixMultiplyRightTransposedInto(inputSlice, _weights, outputSlice);
 
-                // 2. Continuous allocation-free SIMD Bias Addition
                 if (_useBias)
                 {
-                    AddBiasInPlaceBatch(output3D);
+                    AddBiasInPlace(outputSlice);
                 }
+            });
 
-                return output3D;
-            }
-
-            throw new ArgumentException($"Unsupported input tensor rank: {input.Rank}");
+            return output;
         }
 
         public TensorBase Backward(TensorBase gradient)
@@ -163,59 +178,58 @@ namespace SimpleTransformer.Model
             TensorBase input = _lastInput;
             int layers = gradient.Layers;
 
-            // Allocate full Rank-3 gradient tensor: [Batch, SequenceLength, InputSize]
             Tensor inputGradient = new Tensor(layers, gradient.Rows, _inputSize);
 
-            // ---------------------------------------------------------------------
-            // STEP 1: Compute dX = G * W for the full 3D Tensor in one pass
-            // ---------------------------------------------------------------------
-            // G is Rank 3 [Layers, Rows, OutputSize]
-            // _weights is shared Rank 2 [OutputSize, InputSize]
-            // Result inputGradient is Rank 3 [Layers, Rows, InputSize]
-            TensorMathSimd.MatMul(gradient, _weights, inputGradient, transposeA: false, transposeB: false);
-
-            // ---------------------------------------------------------------------
-            // STEP 2: Compute dW = G^T * X into Thread-Local Buffers (Zero-Allocation)
-            // ---------------------------------------------------------------------
-            // Clear thread-local scratchpads
+            // 1. Clear thread-local gradient buffers across participating threads before calculation
             foreach (var localBuffer in _threadLocalDW.Values)
             {
                 TensorUtilitiesSimd.Fill(localBuffer, 0f);
             }
+            if (_useBias)
+            {
+                foreach (var localBuffer in _threadLocalDB.Values)
+                {
+                    if (localBuffer != null)
+                        TensorUtilitiesSimd.Fill(localBuffer, 0f);
+                }
+            }
 
-            int seqLength = gradient.Rows;
-            int gradStride = seqLength * _outputSize;
-            int inputStride = seqLength * _inputSize;
-
-            // Parallel accumulation over batch layers using raw offsets
+            // 2. Compute slices in parallel without lock contention
             Parallel.For(0, layers, b =>
             {
+                TensorBase gradSlice = TensorUtilitiesSimd.GetLayer(gradient, b);
+                TensorBase inputSlice = TensorUtilitiesSimd.GetLayer(input, b);
+                TensorBase dInputSlice = TensorUtilitiesSimd.GetLayer(inputGradient, b);
+
+                // Re-use pre-allocated thread-local scratchpads (Zero-Allocation)
                 Tensor localDW = _threadLocalDW.Value!;
 
-                // Compute offset starting points directly without GetLayer allocations
-                int gradOffset = gradient.Offset + (b * gradStride);
-                int inputOffset = input.Offset + (b * inputStride);
+                // dW_b = gradSlice^T * inputSlice (accumulate into local thread buffer)
+                TensorMathSimd.MatrixMultiplyLeftTransposedAccumulateInto(gradSlice, inputSlice, localDW);
 
-                // Execute 2D Slice GEMM: localDW += gradSlice^T * inputSlice
-                TensorMathSimd.MatrixMultiply2DSliceAccumulate(
-                    gradient.Buffer, gradOffset, _outputSize, seqLength, gradient.Cols, transposeA: true,
-                    input.Buffer, inputOffset, seqLength, _inputSize, input.Cols, transposeB: false,
-                    localDW.Buffer, localDW.Offset, _outputSize, _inputSize
-                );
+                // dX_b = gradSlice * weights
+                TensorMathSimd.MatrixMultiplyInto(gradSlice, _weights, dInputSlice);
+
+                if (_useBias)
+                {
+                    Tensor localDB = _threadLocalDB.Value!;
+                    AccumulateBiasGradient(gradSlice, localDB);
+                }
             });
 
-            // Reduce thread-local weight gradients into master _weightGradient
+            // 3. Reduce thread-local gradients into main weight gradient without locking bottleneck
             foreach (var localDW in _threadLocalDW.Values)
             {
                 TensorMathSimd.ElementWiseAddInPlace(_weightGradient, localDW);
             }
 
-            // ---------------------------------------------------------------------
-            // STEP 3: Accumulate Bias Gradient dB = sum(G) over Batch & Sequences
-            // ---------------------------------------------------------------------
             if (_useBias)
             {
-                AccumulateBiasGradient3D(gradient, _biasGradient!);
+                foreach (var localDB in _threadLocalDB.Values)
+                {
+                    if (localDB != null)
+                        TensorMathSimd.ElementWiseAddInPlace(_biasGradient!, localDB);
+                }
             }
 
             return inputGradient;
@@ -232,77 +246,22 @@ namespace SimpleTransformer.Model
 
         #region Helper Methods (Optimized Memory Spans)
 
-        private void AddBiasInPlace(TensorBase output)
+        private void AddBiasInPlace(TensorBase target)
         {
-            int rows = output.Rows;
-            int cols = output.Cols;
+            int rows = target.Rows;
+            int cols = target.Cols;
+            ReadOnlySpan<float> biasSpan = _bias!.Data.AsSpan(0, _outputSize);
+            Span<float> targetSpan = target.Data.AsSpan();
 
-            float[] outputBuffer = output.Buffer;
-            int outputOffset = output.Offset;
-
-            float[] biasBuffer = _bias.Buffer;
-            int biasOffset = _bias.Offset;
-
-            Parallel.For(0, rows, r =>
+            for (int r = 0; r < rows; r++)
             {
-                Span<float> row = outputBuffer.AsSpan(outputOffset + (r * cols), cols);
-                ReadOnlySpan<float> biasSpan = biasBuffer.AsSpan(biasOffset, cols);
-
-                TensorMathSimd.AddInPlace(row, biasSpan);
-            });
+                int rowOffset = target.Offset + (r * target.Stride);
+                Span<float> rowSpan = targetSpan.Slice(rowOffset, cols);
+                
+                // Uses SIMD vector addition under the hood if available
+                TensorMathSimd.AddSpanInPlace(rowSpan, biasSpan);
+            }
         }
-
-        private void AddBiasInPlaceBatch(Tensor output)
-        {
-            int totalSequences = output.Layers * output.Rows;
-            int cols = output.Cols;
-
-            // 1. Capture standard reference types / primitive values for the closure
-            float[] outputBuffer = output.Buffer; // or output.Data array reference
-            int outputOffset = output.Offset;
-            
-            ReadOnlySpan<float> biasSpanStatic = _bias.ReadOnlySpan;
-            float[] biasBuffer = _bias.Buffer; // or pass raw bias array if available
-            int biasOffset = _bias.Offset;
-
-            // 2. Parallel loop captures arrays and integers (allowed)
-            Parallel.For(0, totalSequences, seqIdx =>
-            {
-                // 3. Create ref structs LOCALLY inside the thread body
-                Span<float> row = outputBuffer.AsSpan(outputOffset + (seqIdx * cols), cols);
-                ReadOnlySpan<float> biasSpan = biasBuffer.AsSpan(biasOffset, cols);
-
-                TensorMathSimd.AddInPlace(row, biasSpan);
-            });
-        }
-
-        private void AccumulateBiasGradient3D(TensorBase gradient, TensorBase biasGradient)
-        {
-            int totalRows = gradient.Layers * gradient.Rows;
-            int cols = gradient.Cols;
-
-            float[] gradBuffer = gradient.Buffer;
-            int gradOffset = gradient.Offset;
-
-            float[] biasBuffer = biasGradient.Buffer;
-            int biasOffset = biasGradient.Offset;
-
-            // Outer loop over columns enables continuous SIMD reduction across memory rows
-            Parallel.For(0, cols, colIdx =>
-            {
-                float sum = 0f;
-                int currentOffset = gradOffset + colIdx;
-
-                for (int r = 0; r < totalRows; r++)
-                {
-                    sum += gradBuffer[currentOffset];
-                    currentOffset += cols;
-                }
-
-                // Accumulate into target bias gradient buffer
-                biasBuffer[biasOffset + colIdx] += sum;
-            });
-        }        
 
         private void AccumulateBiasGradient(TensorBase gradient, Tensor targetBiasGrad)
         {
