@@ -1,4 +1,6 @@
-using Serilog;
+using System;
+using System.Buffers;
+using System.Collections.Generic;
 using System.Threading.Tasks;
 using SimpleTransformer.Model.Extensions;
 using SimpleTransformer.Model.Extensions.Numerics;
@@ -11,8 +13,9 @@ namespace SimpleTransformer.Model
         private readonly int _embeddingSize;
         private readonly float _epsilon;
 
-        private float[]? _lastInvStd;
-        private Tensor? _lastNormalized;
+        private float[]? _lastInvStdBuffer;
+        private int _lastInvStdCount;
+        private TensorBase? _lastNormalized;
 
         private readonly Tensor _gamma;
         private readonly Tensor _beta;
@@ -58,40 +61,40 @@ namespace SimpleTransformer.Model
             TensorUtilitiesSimd.Fill(_gradientBeta, 0.0f);
         }
 
-        public TensorBase Forward(TensorBase input)
+        public TensorBase Forward(TensorBase input, TensorWorkspace workspace)
         {
             return input.Rank switch
             {
-                2 => ForwardSequence(input),
-                3 => ForwardBatch(input),
+                2 => ForwardSequence(input, workspace),
+                3 => ForwardBatch(input, workspace),
                 _ => throw new ArgumentException("LayerNorm expects Rank 2 or Rank 3.")
             };
         }
 
-        private TensorBase ForwardSequence(TensorBase input)
+        private TensorBase ForwardSequence(TensorBase input, TensorWorkspace workspace)
         {
             if (input.Cols != _embeddingSize)
                 throw new ArgumentException($"Expected {_embeddingSize} columns, got {input.Cols}.");
 
             _lastInput = input;
-            EnsureCacheCapacity(totalRows: input.Rows, cols: input.Cols);
+            EnsureCacheCapacity(totalRows: input.Rows, cols: input.Cols, workspace);
 
-            Tensor output = new Tensor(input.Rows, input.Cols);
+            TensorBase output = workspace.BorrowLike(input);
             ComputeLayerNormForward(input, output, startCacheRow: 0);
 
             return output;
         }
 
-        private TensorBase ForwardBatch(TensorBase input)
+        private TensorBase ForwardBatch(TensorBase input, TensorWorkspace workspace)
         {
             if (input.Cols != _embeddingSize)
                 throw new ArgumentException($"Expected {_embeddingSize} columns, got {input.Cols}.");
 
             _lastInput = input;
             int totalRows = input.Layers * input.Rows;
-            EnsureCacheCapacity(totalRows: totalRows, cols: input.Cols);
+            EnsureCacheCapacity(totalRows: totalRows, cols: input.Cols, workspace);
 
-            Tensor output = new Tensor(input.Layers, input.Rows, input.Cols);
+            TensorBase output = workspace.BorrowLike(input);
             int layers = input.Layers;
 
             Parallel.For(0, layers, l =>
@@ -111,11 +114,11 @@ namespace SimpleTransformer.Model
             int rows = input.Rows;
             int cols = input.Cols;
 
-            float[] inData = input.Data;
-            float[] outData = output.Data;
-            float[] normData = _lastNormalized!.Data;
-            float[] gammaData = _gamma.Data;
-            float[] betaData = _beta.Data;
+            ReadOnlySpan<float> inData = input.Data.AsSpan();
+            Span<float> outData = output.Data.AsSpan();
+            Span<float> normData = _lastNormalized!.Data.AsSpan();
+            ReadOnlySpan<float> gammaData = _gamma.Data.AsSpan();
+            ReadOnlySpan<float> betaData = _beta.Data.AsSpan();
 
             for (int r = 0; r < rows; r++)
             {
@@ -133,7 +136,7 @@ namespace SimpleTransformer.Model
                     invStd = 1f; // Fallback sanity cap
                 }
 
-                _lastInvStd![startCacheRow + r] = invStd;
+                _lastInvStdBuffer![startCacheRow + r] = invStd;
 
                 for (int c = 0; c < cols; c++)
                 {
@@ -146,32 +149,32 @@ namespace SimpleTransformer.Model
             }
         }
 
-        public TensorBase Backward(TensorBase gradient)
+        public TensorBase Backward(TensorBase gradient, TensorWorkspace workspace)
         {
             return gradient.Rank switch
             {
-                2 => BackwardSequence(gradient),
-                3 => BackwardBatch(gradient),
+                2 => BackwardSequence(gradient, workspace),
+                3 => BackwardBatch(gradient, workspace),
                 _ => throw new ArgumentException("LayerNorm expects Rank 2 or Rank 3.")
             };
         }
 
-        private TensorBase BackwardSequence(TensorBase gradient)
+        private TensorBase BackwardSequence(TensorBase gradient, TensorWorkspace workspace)
         {
             ValidateBackwardState(gradient);
 
-            Tensor inputGradient = new Tensor(_lastInput!.Rows, _lastInput.Cols);
+            TensorBase inputGradient = workspace.BorrowLike(_lastInput!);
             ComputeLayerNormBackward(gradient, inputGradient, startCacheRow: 0, accumulationLock: null);
 
             return inputGradient;
         }
 
-        private TensorBase BackwardBatch(TensorBase gradient)
+        private TensorBase BackwardBatch(TensorBase gradient, TensorWorkspace workspace)
         {
             ValidateBackwardState(gradient);
 
             int layers = gradient.Layers;
-            Tensor inputGradient = new Tensor(layers, gradient.Rows, gradient.Cols);
+            TensorBase inputGradient = workspace.BorrowLike(_lastInput!);
             object accumulationLock = new object();
 
             Parallel.For(0, layers, l =>
@@ -195,69 +198,79 @@ namespace SimpleTransformer.Model
             int rows = gradient.Rows;
             int cols = _embeddingSize;
 
-            float[] gradData = gradient.Data;
-            float[] dInputData = inputGradient.Data;
-            float[] normData = _lastNormalized!.Data;
-            float[] gammaData = _gamma.Data;
+            ReadOnlySpan<float> gradData = gradient.Data.AsSpan();
+            Span<float> dInputData = inputGradient.Data.AsSpan();
+            ReadOnlySpan<float> normData = _lastNormalized!.Data.AsSpan();
+            ReadOnlySpan<float> gammaData = _gamma.Data.AsSpan();
 
-            // Thread-local accumulation buffers for parameter gradients
-            float[] localDGamma = new float[cols];
-            float[] localDBeta = new float[cols];
+            // Borrow thread-local accumulation buffers from ArrayPool instead of heap allocations
+            float[] localDGamma = ArrayPool<float>.Shared.Rent(cols);
+            float[] localDBeta = ArrayPool<float>.Shared.Rent(cols);
+            Array.Clear(localDGamma, 0, cols);
+            Array.Clear(localDBeta, 0, cols);
 
-            for (int r = 0; r < rows; r++)
+            try
             {
-                int gradRowOffset = gradient.Offset + r * gradient.Stride;
-                int dInputRowOffset = inputGradient.Offset + r * inputGradient.Stride;
-                int normRowOffset = (startCacheRow + r) * cols;
-                float invStd = _lastInvStd![startCacheRow + r];
-
-                float sumDxHat = 0f;
-                float sumDxHatXHat = 0f;
-
-                // Pass 1: Local reduction sums & parameter accumulation
-                for (int c = 0; c < cols; c++)
+                for (int r = 0; r < rows; r++)
                 {
-                    float g = gradData[gradRowOffset + c];
-                    float xHat = normData[normRowOffset + c];
-                    float dxHat = g * gammaData[c];
+                    int gradRowOffset = gradient.Offset + r * gradient.Stride;
+                    int dInputRowOffset = inputGradient.Offset + r * inputGradient.Stride;
+                    int normRowOffset = (startCacheRow + r) * cols;
+                    float invStd = _lastInvStdBuffer![startCacheRow + r];
 
-                    localDBeta[c] += g;
-                    localDGamma[c] += g * xHat;
+                    float sumDxHat = 0f;
+                    float sumDxHatXHat = 0f;
 
-                    sumDxHat += dxHat;
-                    sumDxHatXHat += dxHat * xHat;
+                    // Pass 1: Local reduction sums & parameter accumulation
+                    for (int c = 0; c < cols; c++)
+                    {
+                        float g = gradData[gradRowOffset + c];
+                        float xHat = normData[normRowOffset + c];
+                        float dxHat = g * gammaData[c];
+
+                        localDBeta[c] += g;
+                        localDGamma[c] += g * xHat;
+
+                        sumDxHat += dxHat;
+                        sumDxHatXHat += dxHat * xHat;
+                    }
+
+                    // Pass 2: Calculate input gradients
+                    float invCols = 1.0f / cols;
+                    for (int c = 0; c < cols; c++)
+                    {
+                        float g = gradData[gradRowOffset + c];
+                        float xHat = normData[normRowOffset + c];
+                        float dxHat = g * gammaData[c];
+
+                        dInputData[dInputRowOffset + c] = invStd * (dxHat - (sumDxHat + xHat * sumDxHatXHat) * invCols);
+                    }
                 }
 
-                // Pass 2: Calculate input gradients
-                float invCols = 1.0f / cols;
-                for (int c = 0; c < cols; c++)
+                // Thread-safe update to global parameter gradients
+                if (accumulationLock != null)
                 {
-                    float g = gradData[gradRowOffset + c];
-                    float xHat = normData[normRowOffset + c];
-                    float dxHat = g * gammaData[c];
-
-                    dInputData[dInputRowOffset + c] = invStd * (dxHat - (sumDxHat + xHat * sumDxHatXHat) * invCols);
+                    lock (accumulationLock)
+                    {
+                        AccumulateGradients(localDGamma, localDBeta);
+                    }
                 }
-            }
-
-            // Thread-safe update to global parameter gradients
-            if (accumulationLock != null)
-            {
-                lock (accumulationLock)
+                else
                 {
                     AccumulateGradients(localDGamma, localDBeta);
                 }
             }
-            else
+            finally
             {
-                AccumulateGradients(localDGamma, localDBeta);
+                ArrayPool<float>.Shared.Return(localDGamma);
+                ArrayPool<float>.Shared.Return(localDBeta);
             }
         }
 
-        private void AccumulateGradients(float[] dGamma, float[] dBeta)
+        private void AccumulateGradients(ReadOnlySpan<float> dGamma, ReadOnlySpan<float> dBeta)
         {
-            float[] gGrad = _gradientGamma.Data;
-            float[] bGrad = _gradientBeta.Data;
+            Span<float> gGrad = _gradientGamma.Data.AsSpan();
+            Span<float> bGrad = _gradientBeta.Data.AsSpan();
 
             for (int c = 0; c < _embeddingSize; c++)
             {
@@ -266,21 +279,22 @@ namespace SimpleTransformer.Model
             }
         }
 
-        private void EnsureCacheCapacity(int totalRows, int cols)
+        private void EnsureCacheCapacity(int totalRows, int cols, TensorWorkspace workspace)
         {
-            // Reallocate or reset if shapes don't match exactly
-            if (_lastInvStd == null || _lastInvStd.Length != totalRows)
+            if (_lastInvStdBuffer == null || _lastInvStdCount < totalRows)
             {
-                _lastInvStd = new float[totalRows];
-            }
-            else
-            {
-                Array.Clear(_lastInvStd, 0, _lastInvStd.Length);
+                if (_lastInvStdBuffer != null)
+                {
+                    ArrayPool<float>.Shared.Return(_lastInvStdBuffer);
+                }
+                _lastInvStdBuffer = ArrayPool<float>.Shared.Rent(totalRows);
+                _lastInvStdCount = totalRows;
             }
 
+            // Borrow lastNormalized from workspace pool using ReadOnlySpan<int> shape
             if (_lastNormalized == null || _lastNormalized.Rows != totalRows || _lastNormalized.Cols != cols)
             {
-                _lastNormalized = new Tensor(totalRows, cols);
+                _lastNormalized = workspace.Borrow2D(totalRows, cols);
             }
             else
             {
@@ -290,7 +304,7 @@ namespace SimpleTransformer.Model
 
         private void ValidateBackwardState(TensorBase gradient)
         {
-            if (_lastInput == null || _lastInvStd == null || _lastNormalized == null)
+            if (_lastInput == null || _lastInvStdBuffer == null || _lastNormalized == null)
             {
                 throw new InvalidOperationException("Forward must be called before Backward.");
             }
@@ -302,6 +316,22 @@ namespace SimpleTransformer.Model
         {
             TensorUtilitiesSimd.Fill(_gradientGamma, 0f);
             TensorUtilitiesSimd.Fill(_gradientBeta, 0f);
+        }
+
+        /// <summary>
+        /// Clears references to cached input/activations and returns rented pooled arrays.
+        /// </summary>
+        public void ClearState()
+        {
+            _lastInput = null;
+            _lastNormalized = null;
+
+            if (_lastInvStdBuffer != null)
+            {
+                ArrayPool<float>.Shared.Return(_lastInvStdBuffer);
+                _lastInvStdBuffer = null;
+                _lastInvStdCount = 0;
+            }
         }
     }
 }

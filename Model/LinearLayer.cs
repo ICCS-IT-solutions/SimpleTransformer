@@ -85,24 +85,29 @@ namespace SimpleTransformer.Model
             }
         }
 
-        public TensorBase Forward(TensorBase input)
+        public TensorBase Forward(TensorBase input, TensorWorkspace workspace)
         {
             return input.Rank switch
             {
-                2 => ForwardSequence(input),
-                3 => ForwardBatch(input),
+                2 => ForwardSequence(input, workspace),
+                3 => ForwardBatch(input, workspace),
                 _ => throw new ArgumentException("Linear layer expects rank 2 or rank 3.")
             };
         }
 
-        private TensorBase ForwardSequence(TensorBase input)
+        private TensorBase ForwardSequence(TensorBase input, TensorWorkspace workspace)
         {
             if (input.Cols != _inputSize)
                 throw new ArgumentException($"Expected {_inputSize} columns, got {input.Cols}.");
 
             _lastInput = input;
 
-            Tensor output = new Tensor(input.Rows, _outputSize);
+            // Borrow output buffer from workspace instead of 'new Tensor(...)'
+            TensorBase output = workspace.Borrow(
+                input.Rows, _outputSize, 
+                shape => new Tensor(shape[0], shape[1])
+            );
+
             TensorMathSimd.MatrixMultiplyRightTransposedInto(input, _weights, output);
 
             if (_useBias)
@@ -113,7 +118,7 @@ namespace SimpleTransformer.Model
             return output;
         }
 
-        private TensorBase ForwardBatch(TensorBase input)
+        private TensorBase ForwardBatch(TensorBase input, TensorWorkspace workspace)
         {
             if (input.Cols != _inputSize)
                 throw new ArgumentException($"Expected {_inputSize} columns, got {input.Cols}.");
@@ -121,7 +126,12 @@ namespace SimpleTransformer.Model
             _lastInput = input;
 
             int layers = input.Layers;
-            Tensor output = new Tensor(layers, input.Rows, _outputSize);
+
+            // Borrow 3D tensor buffer [layers, rows, outputSize]
+            TensorBase output = workspace.Borrow(
+                layers, input.Rows, _outputSize, 
+                shape => new Tensor(shape[0], shape[1], shape[2])
+            );
 
             Parallel.For(0, layers, b =>
             {
@@ -139,17 +149,17 @@ namespace SimpleTransformer.Model
             return output;
         }
 
-        public TensorBase Backward(TensorBase gradient)
+        public TensorBase Backward(TensorBase gradient, TensorWorkspace workspace)
         {
             return gradient.Rank switch
             {
-                2 => BackwardSequence(gradient),
-                3 => BackwardBatch(gradient),
+                2 => BackwardSequence(gradient, workspace),
+                3 => BackwardBatch(gradient, workspace),
                 _ => throw new ArgumentException("Linear layer expects rank 2 or rank 3.")
             };
         }
 
-        private TensorBase BackwardSequence(TensorBase gradient)
+        private TensorBase BackwardSequence(TensorBase gradient, TensorWorkspace workspace)
         {
             if (_lastInput == null) 
                 throw new InvalidOperationException("Last input is null.");
@@ -165,14 +175,18 @@ namespace SimpleTransformer.Model
                 AccumulateBiasGradient(gradient, _biasGradient!);
             }
 
-            // 3. dX = G * W
-            Tensor inputGradient = new Tensor(input.Rows, input.Cols);
+            // 3. dX = G * W (Borrowed from workspace instead of 'new Tensor(...)')
+            TensorBase inputGradient = workspace.Borrow(
+                input.Rows, input.Cols, 
+                shape => new Tensor(shape[0], shape[1])
+            );
+
             TensorMathSimd.MatrixMultiplyInto(gradient, _weights, inputGradient);
 
             return inputGradient;
         }
 
-        private TensorBase BackwardBatch(TensorBase gradient)
+        private TensorBase BackwardBatch(TensorBase gradient, TensorWorkspace workspace)
         {
             if (_lastInput == null)
                 throw new InvalidOperationException("Last input is null.");
@@ -180,9 +194,13 @@ namespace SimpleTransformer.Model
             TensorBase input = _lastInput;
             int layers = gradient.Layers;
 
-            Tensor inputGradient = new Tensor(layers, gradient.Rows, _inputSize);
+            // Borrow dX buffer [layers, rows, inputSize]
+            TensorBase inputGradient = workspace.Borrow(
+                layers, gradient.Rows, _inputSize, 
+                shape => new Tensor(shape[0], shape[1], shape[2])
+            );
 
-            // 1. Clear thread-local gradient buffers across participating threads before calculation
+            // 1. Clear thread-local gradient buffers across participating threads
             foreach (var localBuffer in _threadLocalDW.Values)
             {
                 TensorUtilitiesSimd.Fill(localBuffer, 0f);
@@ -196,20 +214,16 @@ namespace SimpleTransformer.Model
                 }
             }
 
-            // 2. Compute slices in parallel without lock contention
+            // 2. Compute slices in parallel
             Parallel.For(0, layers, b =>
             {
                 TensorBase gradSlice = TensorUtilitiesSimd.GetLayer(gradient, b);
                 TensorBase inputSlice = TensorUtilitiesSimd.GetLayer(input, b);
                 TensorBase dInputSlice = TensorUtilitiesSimd.GetLayer(inputGradient, b);
 
-                // Re-use pre-allocated thread-local scratchpads (Zero-Allocation)
                 Tensor localDW = _threadLocalDW.Value!;
 
-                // dW_b = gradSlice^T * inputSlice (accumulate into local thread buffer)
                 TensorMathSimd.MatrixMultiplyLeftTransposedAccumulateInto(gradSlice, inputSlice, localDW);
-
-                // dX_b = gradSlice * weights
                 TensorMathSimd.MatrixMultiplyInto(gradSlice, _weights, dInputSlice);
 
                 if (_useBias)
@@ -219,7 +233,7 @@ namespace SimpleTransformer.Model
                 }
             });
 
-            // 3. Reduce thread-local gradients into main weight gradient without locking bottleneck
+            // 3. Reduce thread-local gradients into main weight gradient
             foreach (var localDW in _threadLocalDW.Values)
             {
                 TensorMathSimd.ElementWiseAddInPlace(_weightGradient, localDW);

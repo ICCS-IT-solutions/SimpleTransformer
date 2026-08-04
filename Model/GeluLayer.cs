@@ -10,19 +10,16 @@ namespace SimpleTransformer.Model
         public string Name => "gelu";
         private TensorBase? _lastInput;
 
-        public TensorBase Forward(TensorBase input)
+        public TensorBase Forward(TensorBase input, TensorWorkspace workspace)
         {
             if (input.Rank != 2 && input.Rank != 3)
-                throw new ArgumentException("Input must be Rank 2 or Rank 3.");
+                throw new ArgumentException($"Input must be Rank 2 or Rank 3. Got Rank {input.Rank}.");
 
             _lastInput = input;
 
-            // Pre-allocate full output tensor (Rank 2 or Rank 3)
-            Tensor output = input.Rank == 2
-                ? new Tensor(input.Rows, input.Cols)
-                : new Tensor(input.Layers, input.Rows, input.Cols);
+            // Borrow buffer matching exact input shape (handles Rank 2 or Rank 3 seamlessly)
+            TensorBase output = workspace.BorrowLike(input);
 
-            // Parallelized contiguous or multi-threaded processing
             if (input.Rank == 2)
             {
                 TensorMathSimd.GeluInto(input, output);
@@ -41,7 +38,7 @@ namespace SimpleTransformer.Model
             return output;
         }
 
-        public TensorBase Backward(TensorBase gradient)
+        public TensorBase Backward(TensorBase gradient, TensorWorkspace workspace)
         {
             if (_lastInput == null)
                 throw new InvalidOperationException("Forward must be called before Backward.");
@@ -49,10 +46,8 @@ namespace SimpleTransformer.Model
             if (gradient.Rank != _lastInput.Rank)
                 throw new ArgumentException($"Gradient rank ({gradient.Rank}) must match input rank ({_lastInput.Rank}).");
 
-            // Pre-allocate output input-gradient tensor matching shape
-            Tensor inputGradient = gradient.Rank == 2
-                ? new Tensor(_lastInput.Rows, _lastInput.Cols)
-                : new Tensor(_lastInput.Layers, _lastInput.Rows, _lastInput.Cols);
+            // Borrow input gradient buffer from workspace
+            TensorBase inputGradient = workspace.BorrowLike(_lastInput);
 
             if (gradient.Rank == 2)
             {

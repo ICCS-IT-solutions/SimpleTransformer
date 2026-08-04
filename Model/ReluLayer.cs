@@ -1,3 +1,5 @@
+using System;
+
 namespace SimpleTransformer.Model
 {
     public class ReluLayer : ILayer
@@ -10,40 +12,56 @@ namespace SimpleTransformer.Model
             Name = name;
         }
 
-        public TensorBase Forward(TensorBase input)
+        public TensorBase Forward(TensorBase input, TensorWorkspace workspace)
         {
             // Store input context for the backward pass
             _lastInput = input;
 
-            var output = new Tensor(input.Shape);
-            
-            for (int i = 0; i < input.Data.Length; i++)
+            // Borrow a matching tensor from the workspace pool instead of new Tensor()
+            var output = workspace.BorrowLike(input);
+
+            Span<float> inputData = input.Data.AsSpan();
+            Span<float> outputData = output.Data.AsSpan();
+
+            for (int i = 0; i < inputData.Length; i++)
             {
                 // y = max(0, x)
-                float val = input.Data[i];
-                output.Data[i] = val > 0f ? val : 0f;
+                float val = inputData[i];
+                outputData[i] = val > 0f ? val : 0f;
             }
 
             return output;
         }
 
-        public TensorBase Backward(TensorBase gradient)
+        public TensorBase Backward(TensorBase gradient, TensorWorkspace workspace)
         {
             if (_lastInput == null)
             {
                 throw new InvalidOperationException("Forward pass must be called before Backward pass.");
             }
 
-            var inputGrad = new Tensor(gradient.Shape);
+            // Borrow input gradient tensor from the workspace pool
+            var inputGrad = workspace.BorrowLike(gradient);
 
-            for (int i = 0; i < gradient.Data.Length; i++)
+            ReadOnlySpan<float> lastInputData = _lastInput.Data.AsSpan();
+            ReadOnlySpan<float> gradData = gradient.Data.AsSpan();
+            Span<float> inputGradData = inputGrad.Data.AsSpan();
+
+            for (int i = 0; i < gradData.Length; i++)
             {
                 // dL/dx = dL/dy if x > 0 else 0
-                float originalInput = _lastInput.Data[i];
-                inputGrad.Data[i] = originalInput > 0f ? gradient.Data[i] : 0f;
+                inputGradData[i] = lastInputData[i] > 0f ? gradData[i] : 0f;
             }
 
             return inputGrad;
+        }
+
+        /// <summary>
+        /// Clears stored cached activation references between steps.
+        /// </summary>
+        public void ClearState()
+        {
+            _lastInput = null;
         }
     }
 }

@@ -8,6 +8,7 @@ namespace SimpleTransformer.Model
     public class TensorWorkspace : IDisposable
     {
         private readonly ConcurrentDictionary<TensorShapeKey, ConcurrentBag<TensorBase>> _pool = new();
+        private readonly ConcurrentBag<TensorBase> _activeTensors = new();
         private bool _isDisposed;
 
         public TensorWorkspace() { }
@@ -26,15 +27,19 @@ namespace SimpleTransformer.Model
             ThrowIfDisposed();
             var key = new TensorShapeKey(shape);
 
-            if (_pool.TryGetValue(key, out var bag) && bag.TryTake(out var tensor))
+            TensorBase tensor;
+            if (_pool.TryGetValue(key, out var bag) && bag.TryTake(out tensor))
             {
-                // Clear old state so previous activations don't leak into current pass
                 tensor.Clear();
-                return tensor;
+            }
+            else
+            {
+                tensor = factory(shape.ToArray());
             }
 
-            // Pool miss: allocate dynamically using the provided factory
-            return factory(shape.ToArray());
+            // Track active allocation for automatic sweep on Reset()
+            _activeTensors.Add(tensor);
+            return tensor;
         }
 
         /// <summary>
@@ -50,6 +55,50 @@ namespace SimpleTransformer.Model
             => Borrow(stackalloc int[] { layers, rows, cols }, factory);
 
         /// <summary>
+        /// Borrows or allocates a 1D Vector [length].
+        /// </summary>
+        public TensorBase Borrow1D(int length, Func<int[], TensorBase>? factory = null)
+        {
+            factory ??= shape => new Tensor(shape[0]);
+            return Borrow(stackalloc int[] { length }, factory);
+        }
+
+        /// <summary>
+        /// Borrows or allocates a 2D Matrix [rows, cols].
+        /// </summary>
+        public TensorBase Borrow2D(int rows, int cols, Func<int[], TensorBase>? factory = null)
+        {
+            factory ??= shape => new Tensor(shape[0], shape[1]);
+            return Borrow(stackalloc int[] { rows, cols }, factory);
+        }
+
+        /// <summary>
+        /// Borrows or allocates a 3D Tensor [layers/batch, rows, cols].
+        /// </summary>
+        public TensorBase Borrow3D(int layers, int rows, int cols, Func<int[], TensorBase>? factory = null)
+        {
+            factory ??= shape => new Tensor(shape[0], shape[1], shape[2]);
+            return Borrow(stackalloc int[] { layers, rows, cols }, factory);
+        }
+
+        /// <summary>
+        /// Borrows or allocates a 4D Tensor [batch, heads, sequence, dim] (useful for Multi-Head Attention).
+        /// </summary>
+        public TensorBase Borrow4D(int batch, int heads, int sequence, int dim, Func<int[], TensorBase>? factory = null)
+        {
+            factory ??= shape => new Tensor(shape[0], shape[1], shape[2], shape[3]);
+            return Borrow(stackalloc int[] { batch, heads, sequence, dim }, factory);
+        }
+
+        /// <summary>
+        /// Borrows a tensor matching the shape and layout of a reference tensor.
+        /// </summary>
+        public TensorBase BorrowLike(TensorBase reference, Func<int[], TensorBase>? factory = null)
+        {
+            factory ??= shape => new Tensor(shape);
+            return Borrow(reference.Shape, factory);
+        }
+        /// <summary>
         /// Releases a tensor back to the pool for reuse.
         /// </summary>
         public void Release(TensorBase? tensor)
@@ -60,6 +109,26 @@ namespace SimpleTransformer.Model
             var bag = _pool.GetOrAdd(key, _ => new ConcurrentBag<TensorBase>());
             bag.Add(tensor);
         }
+        
+        /// <summary>
+        /// Reclaims all borrowed tensors from the current pass, clears their memory,
+        /// and returns them to the pool for reuse in the next step.
+        /// </summary>
+        public void Reset()
+        {
+            ThrowIfDisposed();
+
+            while (_activeTensors.TryTake(out var tensor))
+            {
+                // Reset data state so previous intermediate results don't bleed over
+                tensor.Clear();
+
+                // Recycle into the pooled bags by shape key
+                var key = new TensorShapeKey(tensor.Shape);
+                var bag = _pool.GetOrAdd(key, _ => new ConcurrentBag<TensorBase>());
+                bag.Add(tensor);
+            }
+        }        
 
         public void Dispose()
         {
@@ -109,10 +178,11 @@ namespace SimpleTransformer.Model
             {
                 if (_hashCode != other._hashCode) return false;
                 return _dimensions.AsSpan().SequenceEqual(other._dimensions);
-            }
+            }         
 
             public override bool Equals(object? obj) => obj is TensorShapeKey other && Equals(other);
             public override int GetHashCode() => _hashCode;
+
         }
     }
 }

@@ -12,27 +12,32 @@ namespace SimpleTransformer.Model
         private readonly List<TensorBase> _lastK = new();
         private readonly List<TensorBase> _lastV = new();
         private readonly List<TensorBase> _lastWeights = new();
-        
-        private readonly AttentionWorkspace _workspace;
+
         private readonly int _headSize;
 
         public ScaledDotProductAttention(int headSize)
         {
             _headSize = headSize;
-            _workspace = new AttentionWorkspace();
         }
 
-        public TensorBase Forward(TensorBase q, TensorBase k, TensorBase v, TensorBase? mask = null)
+        public TensorBase Forward(TensorBase q, TensorBase k, TensorBase v, TensorBase? mask, TensorWorkspace workspace)
         {
             return (q.Rank, k.Rank, v.Rank) switch
             {
-                (2, 2, 2) => ForwardSequence(q, k, v, mask, batchIndex: 0, isBatch: false),
-                (3, 3, 3) => ForwardBatch(q, k, v, mask),
+                (2, 2, 2) => ForwardSequence(q, k, v, mask, batchIndex: 0, isBatch: false, workspace),
+                (3, 3, 3) => ForwardBatch(q, k, v, mask, workspace),
                 _ => throw new ArgumentException("Q, K and V must all be matrices of Rank 2 or 3.")
             };
         }
 
-        private TensorBase ForwardSequence(TensorBase q, TensorBase k, TensorBase v, TensorBase? mask, int batchIndex, bool isBatch)
+        private TensorBase ForwardSequence(
+            TensorBase q, 
+            TensorBase k, 
+            TensorBase v, 
+            TensorBase? mask, 
+            int batchIndex, 
+            bool isBatch, 
+            TensorWorkspace workspace)
         {
             if (!isBatch)
             {
@@ -46,45 +51,49 @@ namespace SimpleTransformer.Model
             _lastK.Add(k);
             _lastV.Add(v);
 
-            _workspace.CachedScores = EnsureShape(_workspace.CachedScores, q.Rows, k.Rows);
-            _workspace.TransposedKeys = EnsureTransposeBuffer(_workspace.TransposedKeys, k);
+            // Borrow temporary buffers for matmul and transposes
+            TensorBase kTransposed = workspace.Borrow2D(k.Cols, k.Rows);
+            TensorBase scores = workspace.Borrow2D(q.Rows, k.Rows);
 
             // 1. Q * K^T
-            TensorUtilitiesSimd.TransposeInto(k, _workspace.TransposedKeys);
-            TensorMathSimd.MatrixMultiplyInto(q, _workspace.TransposedKeys, _workspace.CachedScores);
+            TensorUtilitiesSimd.TransposeInto(k, kTransposed);
+            TensorMathSimd.MatrixMultiplyInto(q, kTransposed, scores);
+            workspace.Release(kTransposed);
 
             // 2. Scale scores: 1 / sqrt(d_k)
-            TensorMathSimd.ScaleInPlace(_workspace.CachedScores, 1.0f / MathF.Sqrt(_headSize));
+            TensorMathSimd.ScaleInPlace(scores, 1.0f / MathF.Sqrt(_headSize));
 
             // 3. Apply mask if provided (-1e9f before softmax)
             if (mask != null)
             {
-                MaskUtilitiesSimd.ApplyMaskInPlace(_workspace.CachedScores, mask);
+                MaskUtilitiesSimd.ApplyMaskInPlace(scores, mask);
             }
 
-            // 4. Softmax computation (Ensure numerically stable softmax inside this SIMD extension)
-            TensorUtilitiesSimd.SoftmaxRowsInPlace((Tensor)_workspace.CachedScores);
+            // 4. Softmax computation
+            TensorUtilitiesSimd.SoftmaxRowsInPlace((Tensor)scores);
 
-            // 5. Cache softmax weights PER BATCH ITEM for backprop
-            Tensor currentWeights = new Tensor(_workspace.CachedScores.Rows, _workspace.CachedScores.Cols);
-            TensorUtilitiesSimd.CopyTensor(_workspace.CachedScores, currentWeights);
+            // 5. Cache softmax weights PER BATCH ITEM for backprop (persist until Backward completes)
+            Tensor currentWeights = new Tensor(scores.Rows, scores.Cols);
+            TensorUtilitiesSimd.CopyTensor(scores, currentWeights);
             _lastWeights.Add(currentWeights);
 
             // 6. Output = SoftmaxWeights * V
-            _workspace.CachedOutput = EnsureShape(_workspace.CachedOutput, _workspace.CachedScores.Rows, v.Cols);
-            TensorMathSimd.MatrixMultiplyInto(_workspace.CachedScores, v, _workspace.CachedOutput);
+            TensorBase output = workspace.Borrow2D(scores.Rows, v.Cols);
+            TensorMathSimd.MatrixMultiplyInto(scores, v, output);
 
-            return _workspace.CachedOutput;
+            workspace.Release(scores);
+
+            return output;
         }
 
-        private TensorBase ForwardBatch(TensorBase q, TensorBase k, TensorBase v, TensorBase? mask = null)
+        private TensorBase ForwardBatch(TensorBase q, TensorBase k, TensorBase v, TensorBase? mask, TensorWorkspace workspace)
         {
             _lastQ.Clear();
             _lastK.Clear();
             _lastV.Clear();
             _lastWeights.Clear();
 
-            _workspace.BatchOutputCache = EnsureShape3D(_workspace.BatchOutputCache, q.Layers, q.Rows, v.Cols);
+            TensorBase batchOutput = workspace.Borrow3D(q.Layers, q.Rows, v.Cols);
 
             for (int b = 0; b < q.Layers; b++)
             {
@@ -93,20 +102,23 @@ namespace SimpleTransformer.Model
                 TensorBase vSlice = TensorUtilitiesSimd.GetLayer(v, b);
                 TensorBase? maskSlice = mask != null ? TensorUtilitiesSimd.GetLayer(mask, b) : null;
 
-                TensorBase result = ForwardSequence(qSlice, kSlice, vSlice, maskSlice, batchIndex: b, isBatch: true);
+                TensorBase result = ForwardSequence(qSlice, kSlice, vSlice, maskSlice, batchIndex: b, isBatch: true, workspace);
 
-                TensorUtilitiesSimd.SetLayer(_workspace.BatchOutputCache, b, result);
+                TensorUtilitiesSimd.SetLayer(batchOutput, b, result);
+                
+                // Release temporary 2D slice output once packed into 3D batch tensor
+                workspace.Release(result);
             }
 
-            return _workspace.BatchOutputCache;
+            return batchOutput;
         }
 
-        public (TensorBase dQ, TensorBase dK, TensorBase dV) Backward(TensorBase outputGradient)
+        public (TensorBase dQ, TensorBase dK, TensorBase dV) Backward(TensorBase outputGradient, TensorWorkspace workspace)
         {
             return outputGradient.Rank switch
             {
-                2 => BackwardSequence(outputGradient, _lastQ[0], _lastK[0], _lastV[0], _lastWeights[0]),
-                3 => BackwardBatch(outputGradient),
+                2 => BackwardSequence(outputGradient, _lastQ[0], _lastK[0], _lastV[0], _lastWeights[0], workspace),
+                3 => BackwardBatch(outputGradient, workspace),
                 _ => throw new ArgumentException("Gradient must be Rank 2 or 3.")
             };
         }
@@ -116,55 +128,61 @@ namespace SimpleTransformer.Model
             TensorBase q, 
             TensorBase k, 
             TensorBase v,
-            TensorBase savedWeights)
+            TensorBase savedWeights,
+            TensorWorkspace workspace)
         {
             // dV = SoftmaxWeights^T * outputGradient
-            _workspace.CachedWeightsTransposed = EnsureTransposeBuffer(_workspace.CachedWeightsTransposed, savedWeights);
-            TensorUtilitiesSimd.TransposeInto(savedWeights, _workspace.CachedWeightsTransposed);
+            TensorBase weightsTransposed = workspace.Borrow2D(savedWeights.Cols, savedWeights.Rows);
+            TensorUtilitiesSimd.TransposeInto(savedWeights, weightsTransposed);
 
-            _workspace.CachedDV = EnsureShape(_workspace.CachedDV, v.Rows, v.Cols);
-            TensorMathSimd.MatrixMultiplyInto(_workspace.CachedWeightsTransposed, outputGradient, _workspace.CachedDV);
+            TensorBase dV = workspace.Borrow2D(v.Rows, v.Cols);
+            TensorMathSimd.MatrixMultiplyInto(weightsTransposed, outputGradient, dV);
+            workspace.Release(weightsTransposed);
 
             // dWeights = outputGradient * V^T
-            _workspace.CachedVTransposed = EnsureTransposeBuffer(_workspace.CachedVTransposed, v);
-            TensorUtilitiesSimd.TransposeInto(v, _workspace.CachedVTransposed);
+            TensorBase vTransposed = workspace.Borrow2D(v.Cols, v.Rows);
+            TensorUtilitiesSimd.TransposeInto(v, vTransposed);
 
-            _workspace.CachedDWeights = EnsureShape(_workspace.CachedDWeights, outputGradient.Rows, _workspace.CachedVTransposed.Cols);
-            TensorMathSimd.MatrixMultiplyInto(outputGradient, _workspace.CachedVTransposed, _workspace.CachedDWeights);
+            TensorBase dWeights = workspace.Borrow2D(outputGradient.Rows, vTransposed.Cols);
+            TensorMathSimd.MatrixMultiplyInto(outputGradient, vTransposed, dWeights);
+            workspace.Release(vTransposed);
 
             // dScores = SoftmaxBackward(dWeights, SoftmaxWeights)
-            _workspace.CachedDScores = EnsureSameShape(_workspace.CachedDScores, _workspace.CachedDWeights);
-            TensorUtilitiesSimd.SoftmaxBackwardInto((Tensor)_workspace.CachedDWeights, (Tensor)savedWeights, (Tensor)_workspace.CachedDScores);
+            TensorBase dScores = workspace.Borrow2D(dWeights.Rows, dWeights.Cols);
+            TensorUtilitiesSimd.SoftmaxBackwardInto((Tensor)dWeights, (Tensor)savedWeights, (Tensor)dScores);
+            workspace.Release(dWeights);
 
             // Scale dScores back by 1 / Sqrt(headSize)
-            TensorMathSimd.ScaleInPlace(_workspace.CachedDScores, 1.0f / MathF.Sqrt(_headSize));
+            TensorMathSimd.ScaleInPlace(dScores, 1.0f / MathF.Sqrt(_headSize));
 
             // dQ = dScores * K
-            _workspace.CachedDQ = EnsureShape(_workspace.CachedDQ, q.Rows, q.Cols);
-            TensorMathSimd.MatrixMultiplyInto(_workspace.CachedDScores, k, _workspace.CachedDQ);
+            TensorBase dQ = workspace.Borrow2D(q.Rows, q.Cols);
+            TensorMathSimd.MatrixMultiplyInto(dScores, k, dQ);
 
             // dK = dScores^T * Q
-            _workspace.CachedDScoresTransposed = EnsureTransposeBuffer(_workspace.CachedDScoresTransposed, _workspace.CachedDScores);
-            TensorUtilitiesSimd.TransposeInto(_workspace.CachedDScores, _workspace.CachedDScoresTransposed);
+            TensorBase dScoresTransposed = workspace.Borrow2D(dScores.Cols, dScores.Rows);
+            TensorUtilitiesSimd.TransposeInto(dScores, dScoresTransposed);
 
-            _workspace.CachedDK = EnsureShape(_workspace.CachedDK, k.Rows, k.Cols);
-            TensorMathSimd.MatrixMultiplyInto(_workspace.CachedDScoresTransposed, q, _workspace.CachedDK);
+            TensorBase dK = workspace.Borrow2D(k.Rows, k.Cols);
+            TensorMathSimd.MatrixMultiplyInto(dScoresTransposed, q, dK);
 
-            return (_workspace.CachedDQ, _workspace.CachedDK, _workspace.CachedDV);
+            // Clean up temporary workspace buffers
+            workspace.Release(dScores);
+            workspace.Release(dScoresTransposed);
+
+            return (dQ, dK, dV);
         }
 
-        private (TensorBase dQ, TensorBase dK, TensorBase dV) BackwardBatch(TensorBase outputGradient)
+        private (TensorBase dQ, TensorBase dK, TensorBase dV) BackwardBatch(TensorBase outputGradient, TensorWorkspace workspace)
         {
             if (_lastQ.Count == 0)
                 throw new InvalidOperationException("Forward pass must be called before Backward.");
 
             int layers = outputGradient.Layers;
-            int rows = outputGradient.Rows;
-            int cols = outputGradient.Cols;
 
-            _workspace.BatchDQCache = EnsureShape3D(_workspace.BatchDQCache, layers, _lastQ[0].Rows, _lastQ[0].Cols);
-            _workspace.BatchDKCache = EnsureShape3D(_workspace.BatchDKCache, layers, _lastK[0].Rows, _lastK[0].Cols);
-            _workspace.BatchDVCache = EnsureShape3D(_workspace.BatchDVCache, layers, _lastV[0].Rows, _lastV[0].Cols);
+            TensorBase batchDQ = workspace.Borrow3D(layers, _lastQ[0].Rows, _lastQ[0].Cols);
+            TensorBase batchDK = workspace.Borrow3D(layers, _lastK[0].Rows, _lastK[0].Cols);
+            TensorBase batchDV = workspace.Borrow3D(layers, _lastV[0].Rows, _lastV[0].Cols);
 
             for (int b = 0; b < layers; b++)
             {
@@ -175,55 +193,20 @@ namespace SimpleTransformer.Model
                     _lastQ[b],
                     _lastK[b],
                     _lastV[b],
-                    _lastWeights[b]);
+                    _lastWeights[b],
+                    workspace);
 
-                TensorUtilitiesSimd.SetLayer(_workspace.BatchDQCache, b, dq);
-                TensorUtilitiesSimd.SetLayer(_workspace.BatchDKCache, b, dk);
-                TensorUtilitiesSimd.SetLayer(_workspace.BatchDVCache, b, dv);
+                TensorUtilitiesSimd.SetLayer(batchDQ, b, dq);
+                TensorUtilitiesSimd.SetLayer(batchDK, b, dk);
+                TensorUtilitiesSimd.SetLayer(batchDV, b, dv);
+
+                // Release 2D slices borrowed during BackwardSequence
+                workspace.Release(dq);
+                workspace.Release(dk);
+                workspace.Release(dv);
             }
 
-            return (_workspace.BatchDQCache, _workspace.BatchDKCache, _workspace.BatchDVCache);
-        }
-
-        private static TensorBase EnsureTransposeBuffer(TensorBase? buffer, TensorBase source) => EnsureShape(buffer, source.Cols, source.Rows);
-        private static TensorBase EnsureSameShape(TensorBase? buffer, TensorBase source) => EnsureShape(buffer, source.Rows, source.Cols);
-
-        private static TensorBase EnsureShape(TensorBase? buffer, int rows, int cols)
-        {
-            if (buffer == null || buffer.Rank != 2 || buffer.Rows != rows || buffer.Cols != cols)
-                return new Tensor(rows, cols);
-
-            TensorUtilitiesSimd.Fill(buffer, 0f);
-            return buffer;
-        }
-
-        private static TensorBase EnsureShape3D(TensorBase? buffer, int layers, int rows, int cols)
-        {
-            if (buffer == null || buffer.Rank != 3 || buffer.Layers != layers || buffer.Rows != rows || buffer.Cols != cols)
-                return new Tensor(layers, rows, cols);
-
-            TensorUtilitiesSimd.Fill(buffer, 0f);
-            return buffer;
-        }
-
-        private sealed class AttentionWorkspace
-        {
-            public TensorBase CachedVTransposed = null!;
-            public TensorBase CachedWeightsTransposed = null!;
-            public TensorBase CachedScores = null!;
-            public TensorBase CachedDScores = null!;
-            public TensorBase CachedDScoresTransposed = null!;
-            public TensorBase CachedDWeights = null!;
-            public TensorBase CachedDQ = null!;
-            public TensorBase CachedDV = null!;
-            public TensorBase CachedDK = null!;
-            public TensorBase CachedOutput = null!;
-            public TensorBase TransposedKeys = null!;
-
-            public TensorBase BatchOutputCache = null!;
-            public TensorBase BatchDQCache = null!;
-            public TensorBase BatchDKCache = null!;
-            public TensorBase BatchDVCache = null!;
+            return (batchDQ, batchDK, batchDV);
         }
     }
 }

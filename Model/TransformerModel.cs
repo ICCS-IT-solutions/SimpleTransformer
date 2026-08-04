@@ -14,7 +14,8 @@ namespace SimpleTransformer.Model
         //These don't yet exist, but are created when the constructor calls BuildModel(). 
         private EmbeddingLayer _embedding = null!;
         private LinearLayer _outputProjection = null!;
-        private PositionalEncodingLayer _position = null!;       
+        private PositionalEncodingLayer _position = null!;
+        private TensorWorkspace _workspace = null!;       
         public IEnumerable<TrainableParameter> Parameters
         {
             get
@@ -118,17 +119,17 @@ namespace SimpleTransformer.Model
             // REMOVED: _embedding.ZeroGradients(); 
 
             DiagonisticUtilities.AssertNoNaN(input, "Input contains NaN.");
-            TensorBase x = _embedding.Forward(input);
+            TensorBase x = _embedding.Forward(input, _workspace);
 
             DiagonisticUtilities.AssertNoNaN(x, "Embedding contains NaN.");
-            x = _position.Forward(x);
+            x = _position.Forward(x, _workspace);
 
             DiagonisticUtilities.AssertNoNaN(x, "Positional encoding contains NaN.");
             foreach (var layer in _layers)
             {
                 var layerWatch = Stopwatch.StartNew();
                 var layerIndex = _layers.IndexOf(layer);
-                x = layer.Forward(x);
+                x = layer.Forward(x, _workspace);
                 Log.Information($"Forward pass through layer {layerIndex} ({layer.GetType().Name}) completed in {layerWatch.ElapsedMilliseconds} ms.");
                 layerWatch.Stop();
                 DiagonisticUtilities.AssertNoNaN(x, $"Transformer layer {layerIndex} contains NaN.");
@@ -137,7 +138,7 @@ namespace SimpleTransformer.Model
             TensorBase hiddenState = x;
             DiagonisticUtilities.AssertNoNaN(hiddenState, "Hidden state contains NaN.");
 
-            TensorBase logits = _outputProjection.Forward(hiddenState);
+            TensorBase logits = _outputProjection.Forward(hiddenState, _workspace);
             DiagonisticUtilities.AssertNoNaN(logits, "Logits contains NaN.");
 
             forwardWatch.Stop();
@@ -152,7 +153,7 @@ namespace SimpleTransformer.Model
             var backwardWatch = Stopwatch.StartNew();
             DiagonisticUtilities.AssertNoNaN(gradient, "Gradient contains NaN.");
 
-            gradient = _outputProjection.Backward(gradient);
+            gradient = _outputProjection.Backward(gradient, _workspace);
             DiagonisticUtilities.AssertNoNaN(gradient, "Gradient after backward pass through output projection contains NaN.");
 
             for (int i = _layers.Count - 1; i >= 0; i--)
@@ -160,20 +161,19 @@ namespace SimpleTransformer.Model
                 var thislayer = _layers[i];
                 var layerWatch = Stopwatch.StartNew();
                 
-                gradient = _layers[i].Backward(gradient);
+                gradient = _layers[i].Backward(gradient, _workspace);
                 layerWatch.Stop();
                 Log.Information($"Backward pass through layer {i} ({thislayer.GetType().Name}) completed in {layerWatch.ElapsedMilliseconds} ms.");
                 DiagonisticUtilities.AssertNoNaN(gradient, $"Gradient after backward pass through layer {i} contains NaN.");
             }
 
-            gradient = _position.Backward(gradient);
+            gradient = _position.Backward(gradient, _workspace);
             DiagonisticUtilities.AssertNoNaN(gradient, "Gradient after backward pass through positional encoding contains NaN.");
 
-            gradient = _embedding.Backward(gradient);
+            gradient = _embedding.Backward(gradient, _workspace);
             DiagonisticUtilities.AssertNoNaN(gradient, "Gradient after backward pass through embedding contains NaN.");
 
             // REMOVED: _embedding.ClipGradients(1.0f); -> Handled globally in TrainStep!
-
             backwardWatch.Stop();
             Log.Information($"Backward pass completed in {backwardWatch.ElapsedMilliseconds} ms.");
         }
@@ -578,6 +578,7 @@ namespace SimpleTransformer.Model
             _embedding = new EmbeddingLayer(Config.VocabSize, Config.EmbeddingSize, name: "token_embeddings");
             _position = new PositionalEncodingLayer(Config.EmbeddingSize, Config.MaxSequenceLength, name: "position_embeddings");
             _outputProjection = new LinearLayer(Config.EmbeddingSize, Config.VocabSize, useBias: false, name: "lm_head");
+            _workspace = new TensorWorkspace();
 
             _loss = new CrossEntropyLoss();
             _optimizer = TrainingConfig.Optimizer switch

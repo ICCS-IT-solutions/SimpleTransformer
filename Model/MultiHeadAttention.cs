@@ -39,44 +39,51 @@ namespace SimpleTransformer.Model
             _headSize = embeddingSize / numHeads;
             _heads = new AttentionHead[numHeads];
 
-            // 1. Pass indexed head names down to each AttentionHead
             for (int i = 0; i < numHeads; i++)
             {
                 _heads[i] = new AttentionHead(embeddingSize, _headSize, name: $"{Name}.heads.{i}");
             }
 
-            // 2. Pass hierarchical name down to output projection
             _outputProjection = new LinearLayer(embeddingSize, embeddingSize, useBias: false, name: $"{Name}.out_proj");
         }
 
-        public TensorBase Forward(TensorBase input) => Forward(input, null);
+        // Standard ILayer entry points
+        public TensorBase Forward(TensorBase input, TensorWorkspace workspace) => Forward(input, workspace, null);
 
-        public TensorBase Forward(TensorBase input, TensorBase? mask = null)
+        public TensorBase Forward(TensorBase input, TensorWorkspace workspace, TensorBase? mask)
         {
             return input.Rank switch
             {
-                2 => ForwardSequence(input, mask),
-                3 => ForwardBatch(input, mask),
-                _ => throw new ArgumentException("Input must be rank 2 or rank 3.")
+                2 => ForwardSequence(input, workspace, mask),
+                3 => ForwardBatch(input, workspace, mask),
+                _ => throw new ArgumentException($"Input must be rank 2 or rank 3. Got Rank {input.Rank}.")
             };
         }
 
-        private TensorBase ForwardSequence(TensorBase input, TensorBase? mask = null)
+        private TensorBase ForwardSequence(TensorBase input, TensorWorkspace workspace, TensorBase? mask)
         {
             int rows = input.Rows;
-            Tensor concatenated = new Tensor(rows, _embeddingSize);
+            
+            // Borrow buffer from workspace instead of 'new Tensor(...)'
+            TensorBase concatenated = workspace.Borrow2D(rows, _embeddingSize);
 
-            ComputeForwardSequenceInternal(input, mask, concatenated);
+            ComputeForwardSequenceInternal(input, mask, concatenated, workspace);
 
-            return _outputProjection.Forward(concatenated);
+            TensorBase output = _outputProjection.Forward(concatenated, workspace);
+
+            // Release intermediate buffer after projection completes
+            workspace.Release(concatenated);
+
+            return output;
         }
 
-        private TensorBase ForwardBatch(TensorBase input, TensorBase? mask)
+        private TensorBase ForwardBatch(TensorBase input, TensorWorkspace workspace, TensorBase? mask)
         {
             int layers = input.Layers;
             int rows = input.Rows;
 
-            Tensor concatenatedBatch = new Tensor(layers, rows, _embeddingSize);
+            // Borrow 3D buffer from workspace
+            TensorBase concatenatedBatch = workspace.Borrow3D(layers, rows, _embeddingSize);
 
             for (int b = 0; b < layers; b++)
             {
@@ -84,66 +91,81 @@ namespace SimpleTransformer.Model
                 TensorBase? maskSlice = mask != null ? TensorUtilitiesSimd.GetLayer(mask, b) : null;
                 TensorBase concatSlice = TensorUtilitiesSimd.GetLayer(concatenatedBatch, b);
 
-                ComputeForwardSequenceInternal(inputSlice, maskSlice, concatSlice);
+                ComputeForwardSequenceInternal(inputSlice, maskSlice, concatSlice, workspace);
             }
 
-            return _outputProjection.Forward(concatenatedBatch);
+            TensorBase output = _outputProjection.Forward(concatenatedBatch, workspace);
+
+            // Release 3D intermediate buffer
+            workspace.Release(concatenatedBatch);
+
+            return output;
         }
 
-        private void ComputeForwardSequenceInternal(TensorBase input, TensorBase? mask, TensorBase targetConcat)
+        private void ComputeForwardSequenceInternal(TensorBase input, TensorBase? mask, TensorBase targetConcat, TensorWorkspace workspace)
         {
             int numHeads = _heads.Length;
             int rows = input.Rows;
 
             for (int i = 0; i < numHeads; i++)
             {
-                TensorBase headOutput = _heads[i].Forward(input, mask);
+                TensorBase headOutput = _heads[i].Forward(input, workspace, mask);
                 int startCol = i * _headSize;
                 
-                // Optimized strided slice copy directly into concatenated output buffer
+                // Copy slice into target concatenation buffer
                 TensorUtilitiesSimd.CopyBlock(headOutput, 0, targetConcat, startCol, rows, _headSize);
+
+                // Release individual head output immediately after copying
+                workspace.Release(headOutput);
             }
         }
 
-        public TensorBase Backward(TensorBase gradient)
+        public TensorBase Backward(TensorBase gradient, TensorWorkspace workspace)
         {
             return gradient.Rank switch
             {
-                2 => BackwardSequence(gradient),
-                3 => BackwardBatch(gradient),
-                _ => throw new ArgumentException("Gradient must be rank 2 or rank 3.")
+                2 => BackwardSequence(gradient, workspace),
+                3 => BackwardBatch(gradient, workspace),
+                _ => throw new ArgumentException($"Gradient must be rank 2 or rank 3. Got Rank {gradient.Rank}.")
             };
         }
 
-        private TensorBase BackwardSequence(TensorBase gradient)
+        private TensorBase BackwardSequence(TensorBase gradient, TensorWorkspace workspace)
         {
-            TensorBase dConcat = _outputProjection.Backward(gradient);
-            Tensor inputGradient = new Tensor(dConcat.Rows, _embeddingSize);
+            TensorBase dConcat = _outputProjection.Backward(gradient, workspace);
+            
+            // Borrow gradient target tensor from workspace
+            TensorBase inputGradient = workspace.Borrow2D(dConcat.Rows, _embeddingSize);
 
-            ComputeBackwardSequenceInternal(dConcat, inputGradient);
+            ComputeBackwardSequenceInternal(dConcat, inputGradient, workspace);
+
+            // Clean up output projection backward output
+            workspace.Release(dConcat);
 
             return inputGradient;
         }
 
-        private TensorBase BackwardBatch(TensorBase gradient)
+        private TensorBase BackwardBatch(TensorBase gradient, TensorWorkspace workspace)
         {
-            TensorBase dConcatBatch = _outputProjection.Backward(gradient);
+            TensorBase dConcatBatch = _outputProjection.Backward(gradient, workspace);
             
             int layers = gradient.Layers;
-            Tensor inputGradientBatch = new Tensor(layers, gradient.Rows, _embeddingSize);
+            TensorBase inputGradientBatch = workspace.Borrow3D(layers, gradient.Rows, _embeddingSize);
 
             for (int b = 0; b < layers; b++)
             {
                 TensorBase dConcatSlice = TensorUtilitiesSimd.GetLayer(dConcatBatch, b);
                 TensorBase inputGradSlice = TensorUtilitiesSimd.GetLayer(inputGradientBatch, b);
 
-                ComputeBackwardSequenceInternal(dConcatSlice, inputGradSlice);
+                ComputeBackwardSequenceInternal(dConcatSlice, inputGradSlice, workspace);
             }
+
+            workspace.Release(dConcatBatch);
 
             return inputGradientBatch;
         }
 
-        private void ComputeBackwardSequenceInternal(TensorBase dConcat, TensorBase targetInputGradient)
+        private void ComputeBackwardSequenceInternal(TensorBase dConcat, TensorBase targetInputGradient, TensorWorkspace workspace)
         {
             int numHeads = _heads.Length;
             int rows = dConcat.Rows;
@@ -152,14 +174,18 @@ namespace SimpleTransformer.Model
             {
                 int startColumn = i * _headSize;
 
-                // Zero-allocation path: Use CopyColumnRangeInto or CopyBlock to populate head gradient
-                Tensor headGradient = new Tensor(rows, _headSize);
+                // Borrow slice buffer from workspace
+                TensorBase headGradient = workspace.Borrow2D(rows, _headSize);
                 TensorUtilitiesSimd.CopyBlock(dConcat, startColumn, headGradient, 0, rows, _headSize);
 
-                TensorBase dInputHead = _heads[i].Backward(headGradient);
+                TensorBase dInputHead = _heads[i].Backward(headGradient, workspace);
 
                 // Accumulate gradients into target Input Gradient using SIMD
                 TensorMathSimd.ElementWiseAddInPlace(targetInputGradient, dInputHead);
+
+                // Release local workspace buffers
+                workspace.Release(headGradient);
+                workspace.Release(dInputHead);
             }
         }
 

@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
-using Serilog;
+using System.Linq;
 using SimpleTransformer.Model.Extensions;
 using SimpleTransformer.Model.Extensions.Numerics;
 
@@ -14,8 +13,6 @@ namespace SimpleTransformer.Model
         private readonly LinearLayer _keyProjection;
         private readonly LinearLayer _valueProjection;
         private readonly ScaledDotProductAttention _attention;
-
-        private Tensor? _cachedInputGradient;
 
         public LinearLayer QueryProjection => _queryProjection;
         public LinearLayer KeyProjection => _keyProjection;
@@ -36,115 +33,117 @@ namespace SimpleTransformer.Model
             _attention = new ScaledDotProductAttention(headSize);
         }
 
-        public TensorBase Forward(TensorBase input) => Forward(input, null);
+        public TensorBase Forward(TensorBase input, TensorWorkspace workspace) => Forward(input, workspace, null);
 
-        public TensorBase Forward(TensorBase input, TensorBase? mask = null)
+        public TensorBase Forward(TensorBase input, TensorWorkspace workspace, TensorBase? mask)
         {
             return input.Rank switch
             {
-                2 => ForwardSequence(input, mask),
-                3 => ForwardBatch(input, mask),
-                _ => throw new ArgumentException("Input must be Rank 2 or 3.")
+                2 => ForwardSequence(input, mask, workspace),
+                3 => ForwardBatch(input, mask, workspace),
+                _ => throw new ArgumentException($"Input must be Rank 2 or 3. Got Rank {input.Rank}.")
             };
         }
 
-        private TensorBase ForwardSequence(TensorBase input, TensorBase? mask = null)
+        private TensorBase ForwardSequence(TensorBase input, TensorBase? mask, TensorWorkspace workspace)
         {
             if (input.Rank != 2) 
-                throw new ArgumentException("Input must be a matrix.");
+                throw new ArgumentException("Input must be a matrix (Rank 2).");
 
-            TensorBase q = _queryProjection.Forward(input);
-            TensorBase k = _keyProjection.Forward(input);
-            TensorBase v = _valueProjection.Forward(input);
+            // 1. Project input into Q, K, V workspace tensors
+            TensorBase q = _queryProjection.Forward(input, workspace);
+            TensorBase k = _keyProjection.Forward(input, workspace);
+            TensorBase v = _valueProjection.Forward(input, workspace);
 
-            return _attention.Forward(q, k, v, mask);
+            // 2. Compute attention output
+            TensorBase output = _attention.Forward(q, k, v, mask, workspace);
+
+            // 3. Release intermediate Q, K, V buffers back to workspace pool
+            workspace.Release(q);
+            workspace.Release(k);
+            workspace.Release(v);
+
+            return output;
         }
 
-        private TensorBase ForwardBatch(TensorBase input, TensorBase? mask = null)
+        private TensorBase ForwardBatch(TensorBase input, TensorBase? mask, TensorWorkspace workspace)
         {
             if (input.Rank != 3)
                 throw new ArgumentException("Input must be a stacked matrix (Rank 3).");
 
-            TensorBase q = _queryProjection.Forward(input);
-            TensorBase k = _keyProjection.Forward(input);
-            TensorBase v = _valueProjection.Forward(input);
+            TensorBase q = _queryProjection.Forward(input, workspace);
+            TensorBase k = _keyProjection.Forward(input, workspace);
+            TensorBase v = _valueProjection.Forward(input, workspace);
 
-            return _attention.Forward(q, k, v, mask);
+            TensorBase output = _attention.Forward(q, k, v, mask, workspace);
+
+            workspace.Release(q);
+            workspace.Release(k);
+            workspace.Release(v);
+
+            return output;
         }
 
-        public TensorBase Backward(TensorBase gradient)
+        public TensorBase Backward(TensorBase gradient, TensorWorkspace workspace)
         {
             return gradient.Rank switch
             {
-                2 => BackwardSequence(gradient),
-                3 => BackwardBatch(gradient),
-                _ => throw new ArgumentException("Gradient must be Rank 2 or 3.")
+                2 => BackwardSequence(gradient, workspace),
+                3 => BackwardBatch(gradient, workspace),
+                _ => throw new ArgumentException($"Gradient must be Rank 2 or 3. Got Rank {gradient.Rank}.")
             };
         }
 
-        private TensorBase BackwardSequence(TensorBase gradient)
+        private TensorBase BackwardSequence(TensorBase gradient, TensorWorkspace workspace)
         {
-            var (dQ, dK, dV) = _attention.Backward(gradient);
+            // 1. Backward pass through scaled dot-product attention
+            var (dQ, dK, dV) = _attention.Backward(gradient, workspace);
 
-            TensorBase dInputQ = _queryProjection.Backward(dQ);
-            TensorBase dInputK = _keyProjection.Backward(dK);
-            TensorBase dInputV = _valueProjection.Backward(dV);
+            // 2. Backward pass through projection linear layers
+            TensorBase dInputQ = _queryProjection.Backward(dQ, workspace);
+            TensorBase dInputK = _keyProjection.Backward(dK, workspace);
+            TensorBase dInputV = _valueProjection.Backward(dV, workspace);
 
-            EnsureGradientCacheCapacity(dInputQ.Rows, dInputQ.Cols);
+            // 3. Borrow destination tensor for accumulated input gradient
+            TensorBase dInput = workspace.Borrow2D(dInputQ.Rows, dInputQ.Cols);
 
-            // SIMD-accelerated 3-way elementwise addition: output = dQ + dK + dV
-            TensorMathSimd.AddThreeTensors(dInputQ, dInputK, dInputV, _cachedInputGradient!);
+            // SIMD-accelerated 3-way elementwise addition: output = dInputQ + dInputK + dInputV
+            TensorMathSimd.AddThreeTensors(dInputQ, dInputK, dInputV, dInput);
 
-            return _cachedInputGradient!;
+            // 4. Release all intermediate gradient buffers back to workspace pool
+            workspace.Release(dQ);
+            workspace.Release(dK);
+            workspace.Release(dV);
+            workspace.Release(dInputQ);
+            workspace.Release(dInputK);
+            workspace.Release(dInputV);
+
+            return dInput;
         }
 
-        private TensorBase BackwardBatch(TensorBase gradient)
+        private TensorBase BackwardBatch(TensorBase gradient, TensorWorkspace workspace)
         {
             if (gradient.Rank != 3)
                 throw new ArgumentException("Gradient must be a stacked matrix (Rank 3).");
 
-            var (dQ, dK, dV) = _attention.Backward(gradient);
+            var (dQ, dK, dV) = _attention.Backward(gradient, workspace);
 
-            TensorBase dInputQ = _queryProjection.Backward(dQ);
-            TensorBase dInputK = _keyProjection.Backward(dK);
-            TensorBase dInputV = _valueProjection.Backward(dV);
+            TensorBase dInputQ = _queryProjection.Backward(dQ, workspace);
+            TensorBase dInputK = _keyProjection.Backward(dK, workspace);
+            TensorBase dInputV = _valueProjection.Backward(dV, workspace);
 
-            EnsureGradientCacheCapacity(dInputQ.Layers, dInputQ.Rows, dInputQ.Cols);
+            TensorBase dInput = workspace.Borrow3D(dInputQ.Layers, dInputQ.Rows, dInputQ.Cols);
 
-            // SIMD-accelerated 3-way elementwise addition
-            TensorMathSimd.AddThreeTensors(dInputQ, dInputK, dInputV, _cachedInputGradient!);
+            TensorMathSimd.AddThreeTensors(dInputQ, dInputK, dInputV, dInput);
 
-            return _cachedInputGradient!;
-        }
+            workspace.Release(dQ);
+            workspace.Release(dK);
+            workspace.Release(dV);
+            workspace.Release(dInputQ);
+            workspace.Release(dInputK);
+            workspace.Release(dInputV);
 
-        private void EnsureGradientCacheCapacity(int rows, int cols)
-        {
-            if (_cachedInputGradient == null || _cachedInputGradient.Rank != 2 || 
-                _cachedInputGradient.Rows != rows || _cachedInputGradient.Cols != cols)
-            {
-                _cachedInputGradient = new Tensor(rows, cols);
-            }
-            else
-            {
-                // Zero out the tensor buffer to eliminate stale state
-                TensorUtilitiesSimd.Fill(_cachedInputGradient, 0f);
-            }
-        }
-
-        private void EnsureGradientCacheCapacity(int layers, int rows, int cols)
-        {
-            if (_cachedInputGradient == null || _cachedInputGradient.Rank != 3 || 
-                _cachedInputGradient.Layers != layers || 
-                _cachedInputGradient.Rows != rows || 
-                _cachedInputGradient.Cols != cols)
-            {
-                _cachedInputGradient = new Tensor(layers, rows, cols);
-            }
-            else
-            {
-                // Zero out the tensor buffer to eliminate stale state
-                TensorUtilitiesSimd.Fill(_cachedInputGradient, 0f);
-            }
+            return dInput;
         }
 
         public void ZeroGradients()

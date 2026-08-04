@@ -17,9 +17,6 @@ namespace SimpleTransformer.Model
         public IEnumerable<TrainableParameter> Parameters => _parameters;
 
         private TensorBase? _lastInput;
-        private TensorBase? _cachedOutput;
-        private TensorBase? _cachedInputGradient;
-        
         private readonly Random _random = new();
 
         public EmbeddingLayer(int vocabSize, int embeddingSize, string name = "token_embeddings")
@@ -32,7 +29,7 @@ namespace SimpleTransformer.Model
             _embeddingGradient = new Tensor(vocabSize, embeddingSize);
             _parameters = new[] 
             { 
-                new TrainableParameter($"{Name}.weight",_embeddings, _embeddingGradient) 
+                new TrainableParameter($"{Name}.weight", _embeddings, _embeddingGradient) 
             };
 
             InitEmbeddings();
@@ -49,7 +46,7 @@ namespace SimpleTransformer.Model
             }
         }
 
-        public TensorBase Forward(TensorBase input)
+        public TensorBase Forward(TensorBase input, TensorWorkspace workspace)
         {
             // Ensure embeddings table hasn't been poisoned by the previous optimizer step
             if (float.IsNaN(_embeddings.Data[0]))
@@ -64,15 +61,14 @@ namespace SimpleTransformer.Model
             int batchSize = input.Rank == 1 ? 1 : input.Rows;
             int sequenceLength = input.Rank == 1 ? input.Length : input.Cols;
 
-            // Ensure cached workspace buffer fits batch configuration
-            _cachedOutput = input.Rank == 1 
-                ? EnsureShape2D(_cachedOutput, sequenceLength, _embeddingSize)
-                : EnsureShape3D(_cachedOutput, batchSize, sequenceLength, _embeddingSize);
+            // Borrow destination tensor from pooled workspace
+            TensorBase output = input.Rank == 1 
+                ? workspace.Borrow2D(sequenceLength, _embeddingSize)
+                : workspace.Borrow3D(batchSize, sequenceLength, _embeddingSize);
 
             ReadOnlySpan<float> inputData = input.Data.AsSpan();
             ReadOnlySpan<float> embeddingData = _embeddings.Data.AsSpan();
-            
-            Span<float> outputData = _cachedOutput.Data.AsSpan();
+            Span<float> outputData = output.Data.AsSpan();
 
             int totalTokens = batchSize * sequenceLength;
 
@@ -90,15 +86,14 @@ namespace SimpleTransformer.Model
                 sourceRow.CopyTo(targetRow);
             }
 
-            return _cachedOutput;
+            return output;
         }
 
-        public TensorBase Backward(TensorBase gradient)
+        public TensorBase Backward(TensorBase gradient, TensorWorkspace workspace)
         {
-            // Ensure embeddings table hasn't been poisoned by the previous optimizer step
             if (float.IsNaN(_embeddings.Data[0]))
             {
-                throw new InvalidOperationException("Embedding weights contain NaN prior to forward pass. Check optimizer step or learning rate.");
+                throw new InvalidOperationException("Embedding weights contain NaN prior to backward pass. Check optimizer step or learning rate.");
             }
             if (_lastInput == null)
                 throw new InvalidOperationException("Forward pass must be executed prior to Backward pass.");
@@ -109,7 +104,7 @@ namespace SimpleTransformer.Model
 
             int totalTokens = _lastInput.Rank == 1 ? _lastInput.Length : (_lastInput.Rows * _lastInput.Cols);
 
-            // Accumulate gradients back to embedding table
+            // Accumulate gradients back to the embedding parameters table
             for (int i = 0; i < totalTokens; i++)
             {
                 int tokenId = (int)inputData[i];
@@ -117,14 +112,21 @@ namespace SimpleTransformer.Model
                 ReadOnlySpan<float> incomingGradRow = gradData.Slice(i * _embeddingSize, _embeddingSize);
                 Span<float> targetGradRow = embGradData.Slice(tokenId * _embeddingSize, _embeddingSize);
 
-                // Use SIMD accelerated vector addition for gradient accumulation
+                // SIMD accelerated vector addition for gradient accumulation
                 TensorMathSimd.AddInPlace(targetGradRow, incomingGradRow);
             }
 
-            // Return cached dummy input gradient tensor (discrete token indices carry no continuous gradient)
-            _cachedInputGradient = EnsureShapeSameLayout(_cachedInputGradient, _lastInput);
-            return _cachedInputGradient;
+            // Borrow dummy input gradient from workspace to match ITrainableLayer interface contract
+            TensorBase dummyInputGradient = _lastInput.Rank == 1
+                ? workspace.Borrow1D(_lastInput.Length)
+                : workspace.Borrow2D(_lastInput.Rows, _lastInput.Cols);
+
+            // Clear buffer in case workspace handed us recycled memory
+            TensorUtilitiesSimd.Fill(dummyInputGradient, 0f);
+
+            return dummyInputGradient;
         }
+
         public void ClipGradients(float maxNorm = 1.0f)
         {
             Span<float> gradData = _embeddingGradient.Data.AsSpan();
@@ -149,30 +151,6 @@ namespace SimpleTransformer.Model
         public void ZeroGradients()
         {
             TensorUtilitiesSimd.Fill(_embeddingGradient, 0f);
-        }
-
-        private static TensorBase EnsureShape2D(TensorBase? buffer, int rows, int cols)
-        {
-            if (buffer == null || buffer.Rank != 2 || buffer.Rows != rows || buffer.Cols != cols)
-                return new Tensor(rows, cols);
-
-            return buffer;
-        }
-
-        private static TensorBase EnsureShape3D(TensorBase? buffer, int layers, int rows, int cols)
-        {
-            if (buffer == null || buffer.Rank != 3 || buffer.Layers != layers || buffer.Rows != rows || buffer.Cols != cols)
-                return new Tensor(layers, rows, cols);
-
-            return buffer;
-        }
-
-        private static TensorBase EnsureShapeSameLayout(TensorBase? buffer, TensorBase reference)
-        {
-            if (buffer == null || !buffer.Shape.AsSpan().SequenceEqual(reference.Shape.AsSpan()))
-                return new Tensor(reference.Shape);
-
-            return buffer;
         }
     }
 }
