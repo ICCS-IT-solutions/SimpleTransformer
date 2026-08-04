@@ -5,13 +5,15 @@ namespace SimpleTransformer.Model
 {
     public class PositionalEncodingLayer : ILayer
     {
+        public string Name { get; }
         private readonly int _embeddingSize;
         private readonly int _maxSequenceLength;
 
         private TensorBase? _lastInput;    
         private readonly TensorBase _encoding;
-        public PositionalEncodingLayer(int embeddingSize, int maxSequenceLength)
+        public PositionalEncodingLayer(int embeddingSize, int maxSequenceLength, string name = "positional_encoding")
         {
+            Name = name;
             _embeddingSize = embeddingSize;
             _maxSequenceLength = maxSequenceLength;
 

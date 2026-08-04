@@ -61,6 +61,7 @@ namespace SimpleTransformer.Api
                     watch.Restart();
                     Log.Information("Building transformer model...");
                     var config = TransformerConfig.MediumConfig; // Use the MediumConfig for a balance between performance and memory usage
+                    var trainingConfig = TrainingConfig.DefaultAdamWConfig;
                     var vocabSize = vocabulary.Count;
                     config.UpdateFrom(vocabSize);
                     Log.Information("Loading model weights and configuration...");
@@ -72,7 +73,7 @@ namespace SimpleTransformer.Api
                     {
                         // If the weights file does not exist, we can instantiate a new model with random weights.
                         Log.Warning($"Weights file '{weightsFile}' not found. Instantiating a new model with random weights.");
-                        var model = new TransformerModel(config, new TrainingConfig());
+                        var model = new TransformerModel(config, trainingConfig);
                         Log.Information($"Model instantiated in {watch.ElapsedMilliseconds}ms.");
                         return model;
                     }

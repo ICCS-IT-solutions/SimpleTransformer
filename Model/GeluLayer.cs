@@ -7,6 +7,7 @@ namespace SimpleTransformer.Model
 {
     public class GeluLayer : ILayer
     {
+        public string Name => "gelu";
         private TensorBase? _lastInput;
 
         public TensorBase Forward(TensorBase input)

@@ -8,6 +8,7 @@ namespace SimpleTransformer.Model
 {
     public class MultiHeadAttention : ITrainableLayer
     {
+        public string Name { get; }
         private readonly AttentionHead[] _heads;
         private readonly LinearLayer _outputProjection;
         private readonly int _embeddingSize;
@@ -28,21 +29,24 @@ namespace SimpleTransformer.Model
             }
         }
 
-        public MultiHeadAttention(int embeddingSize, int numHeads)
+        public MultiHeadAttention(int embeddingSize, int numHeads, string name = "attention")
         {
             if (embeddingSize % numHeads != 0) 
                 throw new ArgumentException("Embedding size must be divisible by number of heads.");
 
+            Name = name;
             _embeddingSize = embeddingSize;
             _headSize = embeddingSize / numHeads;
             _heads = new AttentionHead[numHeads];
 
+            // 1. Pass indexed head names down to each AttentionHead
             for (int i = 0; i < numHeads; i++)
             {
-                _heads[i] = new AttentionHead(embeddingSize, _headSize);
+                _heads[i] = new AttentionHead(embeddingSize, _headSize, name: $"{Name}.heads.{i}");
             }
 
-            _outputProjection = new LinearLayer(embeddingSize, embeddingSize);
+            // 2. Pass hierarchical name down to output projection
+            _outputProjection = new LinearLayer(embeddingSize, embeddingSize, useBias: false, name: $"{Name}.out_proj");
         }
 
         public TensorBase Forward(TensorBase input) => Forward(input, null);

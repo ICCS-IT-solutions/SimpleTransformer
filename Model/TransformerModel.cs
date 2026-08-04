@@ -395,11 +395,13 @@ namespace SimpleTransformer.Model
         }       
 
         /// <summary>
-        /// Hydrates model weight (and optional gradient) tensors from a loaded checkpoint.
+        /// Hydrates model weight (and optional gradient) tensors from a loaded checkpoint using parameter names.
         /// </summary>
         public void LoadCheckpointData(IReadOnlyList<TrainableParameterCheckpoint> checkpointParameters)
         {
-            // Flatten parameters to a list to allow index matching
+            // Build a lookup dictionary from checkpoint parameters using their name/identifier
+            var checkpointMap = checkpointParameters.ToDictionary(p => p.Name, p => p);
+
             var modelParameters = Parameters.ToList();
 
             if (modelParameters.Count != checkpointParameters.Count)
@@ -408,35 +410,39 @@ namespace SimpleTransformer.Model
                     $"Checkpoint parameter count ({checkpointParameters.Count}) does not match model parameter count ({modelParameters.Count}).");
             }
 
-            for (int i = 0; i < modelParameters.Count; i++)
+            foreach (var targetParam in modelParameters)
             {
-                var targetParam = modelParameters[i];
-                var loadedParam = checkpointParameters[i];
+                // 1. Verify parameter existence in checkpoint by Name
+                if (!checkpointMap.TryGetValue(targetParam.Name, out var loadedParam))
+                {
+                    throw new InvalidOperationException(
+                        $"Parameter '{targetParam.Name}' missing from checkpoint data.");
+                }
 
-                // 1. Verify shape compatibility
+                // 2. Verify shape compatibility
                 if (!Enumerable.SequenceEqual(targetParam.Value.Shape, loadedParam.Value.Shape))
                 {
                     throw new InvalidOperationException(
-                        $"Parameter shape mismatch at index {i}. Expected [{string.Join(',', targetParam.Value.Shape)}], but checkpoint has [{string.Join(',', loadedParam.Value.Shape)}].");
+                        $"Parameter shape mismatch for '{targetParam.Name}'. Expected [{string.Join(',', targetParam.Value.Shape)}], but checkpoint has [{string.Join(',', loadedParam.Value.Shape)}].");
                 }
 
-                // 2. Fast copy of raw float data into live model tensors
+                // 3. Fast copy of raw float data into live model tensors
                 Array.Copy(loadedParam.Value.Data, targetParam.Value.Data, targetParam.Value.Data.Length);
 
-                // 3. Hydrate gradients if present and target expects them
+                // 4. Hydrate gradients if present and target expects them
                 if (loadedParam.Gradient != null && targetParam.Gradient != null)
                 {
                     if (!Enumerable.SequenceEqual(targetParam.Gradient.Shape, loadedParam.Gradient.Shape))
                     {
                         throw new InvalidOperationException(
-                            $"Gradient shape mismatch at index {i}.");
+                            $"Gradient shape mismatch for '{targetParam.Name}'.");
                     }
 
                     Array.Copy(loadedParam.Gradient.Data, targetParam.Gradient.Data, targetParam.Gradient.Data.Length);
                 }
             }
 
-            Log.Information("Successfully hydrated model weights from checkpoint.");
+            Log.Information("Successfully hydrated {Count} model weight tensors from checkpoint by parameter name.", modelParameters.Count);
         }
 
         public void Train(
@@ -520,10 +526,6 @@ namespace SimpleTransformer.Model
 
                 // If _loss.Backward returns a cached tensor managed internally by _loss, 
                 // DO NOT dispose it here. Otherwise, dispose if it's transient:
-                if (gradient != null && !_loss.ManagesGradientBuffer) 
-                {
-                    DisposeIfDisposable(gradient);
-                }
             }
         }
 
@@ -572,48 +574,72 @@ namespace SimpleTransformer.Model
         }
         private void BuildModel()
         {
-            
-            _embedding = new(Config.VocabSize, Config.EmbeddingSize);
-            _outputProjection = new LinearLayer(Config.EmbeddingSize, Config.VocabSize);
-            _position = new(Config.EmbeddingSize, Config.MaxSequenceLength);
+            // 1. Root-level layers with clean, standard names
+            _embedding = new EmbeddingLayer(Config.VocabSize, Config.EmbeddingSize, name: "token_embeddings");
+            _position = new PositionalEncodingLayer(Config.EmbeddingSize, Config.MaxSequenceLength, name: "position_embeddings");
+            _outputProjection = new LinearLayer(Config.EmbeddingSize, Config.VocabSize, useBias: false, name: "lm_head");
+
             _loss = new CrossEntropyLoss();
-            _optimizer = new SgdOptimizer(TrainingConfig.LearningRate);
+            _optimizer = TrainingConfig.Optimizer switch
+            {
+                OptimizerType.AdamW => new AdamWOptimizer(
+                    TrainingConfig.LearningRate,
+                    TrainingConfig.Beta1,
+                    TrainingConfig.Beta2,
+                    TrainingConfig.Epsilon,
+                    TrainingConfig.WeightDecay),
+
+                OptimizerType.Sgd => new SgdOptimizer(
+                    TrainingConfig.LearningRate,
+                    TrainingConfig.SgdMomentum,
+                    TrainingConfig.WeightDecay,
+                    TrainingConfig.UseNesterov),
+
+                _ => throw new ArgumentOutOfRangeException(nameof(TrainingConfig.Optimizer), "Unsupported optimizer type.")
+            };
 
             Log.Information($@"Current configuration:
-Vocabulary size: {Config.VocabSize}
-Embedding size: {Config.EmbeddingSize}
-Number of layers: {Config.NumLayers}
-Number of heads: {Config.NumHeads}
-Maximum sequence length: {Config.MaxSequenceLength}
-Feed forward size: {Config.FeedForwardSize}");
+        Vocabulary size: {Config.VocabSize}
+        Embedding size: {Config.EmbeddingSize}
+        Number of layers: {Config.NumLayers}
+        Number of heads: {Config.NumHeads}
+        Maximum sequence length: {Config.MaxSequenceLength}
+        Feed forward size: {Config.FeedForwardSize}");
 
-            //Clear any old layers.
+            // Clear any old layers.
             _layers.Clear();
 
             var watch = System.Diagnostics.Stopwatch.StartNew();
             var layerWatch = System.Diagnostics.Stopwatch.StartNew();
             Log.Information("Constructing transformer architecture. Please stand by...");
 
-            for(int i = 0; i < Config.NumLayers; i++)
+            // 2. Loop through blocks, scoping names by layer index "layers.{i}"
+            for (int i = 0; i < Config.NumLayers; i++)
             {
+                string blockName = $"layers.{i}";
                 var componentWatch = System.Diagnostics.Stopwatch.StartNew();
+
                 var attention = new MultiHeadAttention(
                     Config.EmbeddingSize,
-                    Config.NumHeads
+                    Config.NumHeads,
+                    name: $"{blockName}.attention"
                 );
                 Log.Information($"Layer {i}: Attention layer constructed in {componentWatch.ElapsedMilliseconds}ms.");
                 componentWatch.Restart();
+
                 var feedForward = new FeedForwardLayer(
                     Config.EmbeddingSize,
-                    Config.FeedForwardSize);
+                    Config.FeedForwardSize,
+                    name: $"{blockName}.feed_forward"
+                );
                 Log.Information($"Layer {i}: Feed forward layer constructed in {componentWatch.ElapsedMilliseconds}ms.");
                 componentWatch.Restart();
 
-                var norm1 = new LayerNorm(Config.EmbeddingSize);
+                var norm1 = new LayerNorm(Config.EmbeddingSize, name: $"{blockName}.attn_norm");
                 Log.Information($"Layer {i}: Layer norm 1 constructed in {componentWatch.ElapsedMilliseconds}ms.");
                 componentWatch.Restart();
 
-                var norm2 = new LayerNorm(Config.EmbeddingSize);
+                var norm2 = new LayerNorm(Config.EmbeddingSize, name: $"{blockName}.ffn_norm");
                 Log.Information($"Layer {i}: Layer norm 2 constructed in {componentWatch.ElapsedMilliseconds}ms.");
                 componentWatch.Restart();
 
@@ -622,11 +648,13 @@ Feed forward size: {Config.FeedForwardSize}");
                         attention,
                         feedForward,
                         norm1,
-                        norm2));
+                        norm2,
+                        name: blockName));
 
                 Log.Information($"Layer {i} constructed in {layerWatch.ElapsedMilliseconds}ms. Total elapsed: {watch.ElapsedMilliseconds}ms.");
                 layerWatch.Restart();
             }
+
             Log.Information($"Transformer architecture initialisation completed in {watch.ElapsedMilliseconds}ms."); 
             watch.Stop();
         }

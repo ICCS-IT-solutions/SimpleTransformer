@@ -9,6 +9,7 @@ namespace SimpleTransformer.Model
 {
     public class AttentionHead : ITrainableLayer
     {
+        public string Name { get; }
         private readonly LinearLayer _queryProjection;
         private readonly LinearLayer _keyProjection;
         private readonly LinearLayer _valueProjection;
@@ -25,11 +26,12 @@ namespace SimpleTransformer.Model
                 .Concat(_keyProjection.Parameters)
                 .Concat(_valueProjection.Parameters);
 
-        public AttentionHead(int embeddingSize, int headSize)
+        public AttentionHead(int embeddingSize, int headSize, string name = "attention_head")
         {
-            _queryProjection = new LinearLayer(embeddingSize, headSize);
-            _keyProjection   = new LinearLayer(embeddingSize, headSize);
-            _valueProjection = new LinearLayer(embeddingSize, headSize);
+            Name = name;
+            _queryProjection = new LinearLayer(embeddingSize, headSize, name: $"{name}.query");
+            _keyProjection   = new LinearLayer(embeddingSize, headSize, name: $"{name}.key");
+            _valueProjection = new LinearLayer(embeddingSize, headSize, name: $"{name}.value");
 
             _attention = new ScaledDotProductAttention(headSize);
         }

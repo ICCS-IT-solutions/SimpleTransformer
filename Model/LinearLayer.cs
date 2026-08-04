@@ -10,6 +10,7 @@ namespace SimpleTransformer.Model
 {
     public class LinearLayer : ITrainableLayer
     {
+        public string Name { get; }
         private readonly int _inputSize;
         private readonly int _outputSize;
         private readonly bool _useBias;
@@ -30,8 +31,9 @@ namespace SimpleTransformer.Model
         private readonly ThreadLocal<Tensor> _threadLocalDW;
         private readonly ThreadLocal<Tensor?> _threadLocalDB;
 
-        public LinearLayer(int inputSize, int outputSize, bool useBias = true)
+        public LinearLayer(int inputSize, int outputSize, bool useBias = true, string name = "linear")
         {
+            Name = name;
             _inputSize = inputSize;
             _outputSize = outputSize;
             _useBias = useBias;
@@ -46,20 +48,20 @@ namespace SimpleTransformer.Model
                 _biasGradient = new Tensor(1, outputSize);
             }
 
+            // Standard naming convention: .weight for matrix weights, .bias for bias vector
             _parameters = _useBias
                 ? new[]
                 {
-                    new TrainableParameter(_weights, _weightGradient),
-                    new TrainableParameter(_bias!, _biasGradient!)
+                    new TrainableParameter($"{Name}.weight", _weights, _weightGradient),
+                    new TrainableParameter($"{Name}.bias", _bias!, _biasGradient!)
                 }
                 : new[]
                 {
-                    new TrainableParameter(_weights, _weightGradient)
+                    new TrainableParameter($"{Name}.weight", _weights, _weightGradient)
                 };
 
             // Instantiate ThreadLocal scratch buffers for thread safety without dynamic heap allocations
             _threadLocalDW = new ThreadLocal<Tensor>(() => new Tensor(_outputSize, _inputSize), trackAllValues: true);
-            
             _threadLocalDB = new ThreadLocal<Tensor?>(() => _useBias ? new Tensor(1, _outputSize) : null, trackAllValues: true);
 
             InitWeights();

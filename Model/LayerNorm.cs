@@ -7,6 +7,7 @@ namespace SimpleTransformer.Model
 {
     public class LayerNorm : ITrainableLayer
     {
+        public string Name { get; }
         private readonly int _embeddingSize;
         private readonly float _epsilon;
 
@@ -28,8 +29,9 @@ namespace SimpleTransformer.Model
 
         private TensorBase? _lastInput;
 
-        public LayerNorm(int embeddingSize, float epsilon = 1e-5f)
+        public LayerNorm(int embeddingSize, float epsilon = 1e-5f, string name = "layer_norm")
         {
+            Name = name;
             _embeddingSize = embeddingSize;
             _epsilon = epsilon;
 
@@ -38,10 +40,11 @@ namespace SimpleTransformer.Model
             _gradientGamma = new Tensor(embeddingSize);
             _gradientBeta = new Tensor(embeddingSize);
 
+            // Standard PyTorch/HuggingFace naming: .weight for scale (gamma), .bias for shift (beta)
             _parameters = new[]
             {
-                new TrainableParameter(_gamma, _gradientGamma),
-                new TrainableParameter(_beta, _gradientBeta)
+                new TrainableParameter($"{Name}.weight", _gamma, _gradientGamma),
+                new TrainableParameter($"{Name}.bias", _beta, _gradientBeta)
             };
 
             InitParameters();

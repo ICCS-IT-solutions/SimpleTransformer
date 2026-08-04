@@ -13,6 +13,7 @@ namespace SimpleTransformer.Model
         private readonly Tensor _embeddingGradient;
         
         private readonly TrainableParameter[] _parameters;
+        public string Name { get; }
         public IEnumerable<TrainableParameter> Parameters => _parameters;
 
         private TensorBase? _lastInput;
@@ -21,8 +22,9 @@ namespace SimpleTransformer.Model
         
         private readonly Random _random = new();
 
-        public EmbeddingLayer(int vocabSize, int embeddingSize)
+        public EmbeddingLayer(int vocabSize, int embeddingSize, string name = "token_embeddings")
         {
+            Name = name;
             _vocabSize = vocabSize;
             _embeddingSize = embeddingSize;
 
@@ -30,7 +32,7 @@ namespace SimpleTransformer.Model
             _embeddingGradient = new Tensor(vocabSize, embeddingSize);
             _parameters = new[] 
             { 
-                new TrainableParameter(_embeddings, _embeddingGradient) 
+                new TrainableParameter($"{Name}.weight",_embeddings, _embeddingGradient) 
             };
 
             InitEmbeddings();

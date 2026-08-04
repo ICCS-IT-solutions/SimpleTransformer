@@ -8,6 +8,7 @@ namespace SimpleTransformer.Model
 {
     public class FeedForwardLayer : ITrainableLayer
     {
+        public string Name { get; }
         private readonly LinearLayer _expand;
         private readonly GeluLayer _activation;
         private readonly LinearLayer _project;
@@ -24,11 +25,15 @@ namespace SimpleTransformer.Model
             }
         }
 
-        public FeedForwardLayer(int embeddingSize, int hiddenSize)
+        public FeedForwardLayer(int embeddingSize, int hiddenSize, string name = "feed_forward")
         {
-            _expand = new LinearLayer(embeddingSize, hiddenSize);
+            Name = name;
+
+            // Pass hierarchical sub-names down to child linear layers:
+            // PyTorch/SwiGLU convention often uses .w1/.w2 or .expand/.project
+            _expand = new LinearLayer(embeddingSize, hiddenSize, useBias: true, name: $"{Name}.w1");
             _activation = new GeluLayer();
-            _project = new LinearLayer(hiddenSize, embeddingSize);   
+            _project = new LinearLayer(hiddenSize, embeddingSize, useBias: true, name: $"{Name}.w2");
         }
 
         public TensorBase Forward(TensorBase input)

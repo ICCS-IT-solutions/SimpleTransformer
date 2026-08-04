@@ -1,3 +1,4 @@
+using System.Collections.ObjectModel;
 using System.IO;
 using System.Threading.Tasks;
 using Serilog;
@@ -5,6 +6,7 @@ using SimpleTransformer.Api.Requests;
 using SimpleTransformer.Api.Responses;
 using SimpleTransformer.Model;
 using SimpleTransformer.Model.Tokenizer;
+using static SimpleTransformer.Api.Endpoints.Services.TrainingServiceExtensions;
 
 namespace SimpleTransformer.Api.Endpoints.Services
 {
@@ -49,6 +51,19 @@ namespace SimpleTransformer.Api.Endpoints.Services
 
             var samples = CreateTrainingSamples(req.InputText);
             var miniBatches = CreateMiniBatches(samples);
+            var numBatches = miniBatches.Count;
+            Log.Information($"{numBatches} batches created from {samples.Count} samples.");
+            // Determine chunkSize dynamically based on miniBatches count
+            int chunkSize = miniBatches.Count switch
+            {
+                >= 8 => 8,
+                >= 4 => 4,
+                >= 2 => 2,
+                _    => 1 // A single batch of size N (or 1) wrapped cleanly
+            };
+
+            // Zero-allocation chunking using .NET 6+ Chunk()
+            var subBatches = miniBatches.Chunk(chunkSize);
 
             var totalEpochs = startEpoch + req.Config?.Epochs ?? 10; // Default to 10 epochs if not specified
 
@@ -56,10 +71,54 @@ namespace SimpleTransformer.Api.Endpoints.Services
             for (int epoch = startEpoch; epoch < totalEpochs; epoch++)
             {
                 float epochLoss = 0f;
-                foreach (var batch in miniBatches)
+                // Single Random instance reused across the engine
+                var rng = new Random();
+
+                if (numBatches > 8)
                 {
-                    epochLoss += _model.TrainStep(batch.Inputs, batch.Targets);
-                    Log.Information($"Loss this batch: {epochLoss:F6}");
+                    // Shuffle the outer sub-batch groups ONCE per epoch
+                    var shuffledSubBatches = Shuffle(subBatches.ToList(), rng);
+
+                    for (int batch = 0; batch < shuffledSubBatches.Count; batch++)
+                    {
+                        var currentSubBatch = shuffledSubBatches[batch];
+
+                        for (int subBatch = 0; subBatch < currentSubBatch.Count(); subBatch++)
+                        {
+                            var item = currentSubBatch[subBatch];
+                            epochLoss += _model.TrainStep(item.Inputs, item.Targets);
+
+                            // Correct parenthesis grouping for modulus
+                            if ((subBatch + 1) % 4 == 0 || subBatch == 0)
+                            {
+                                Log.Information($"Epoch {epoch + 1}, Batch {batch + 1}, Sub-Batch {subBatch + 1} training loss: {epochLoss:F6}");
+                            }
+                        }
+                        //It may be helpful to save temporary checkpoints here, and simply overwrite them. Possible name could be checkpoint-epoch-{epoch}-temp.bin
+                        //This can help prevent loss of progress should a training run fail or be stopped.
+                        string checkpointFileName = Path.Combine("checkpoints", $"checkpoint-epoch-{epoch}-temp.bin");
+                        await using var stream = File.Create(checkpointFileName);
+                        _model.SaveCheckpoint(stream, epoch, epochLoss);
+                    }
+                }
+                else
+                {
+                    // Shuffle standard mini-batches ONCE per epoch
+                    var shuffledMiniBatches = Shuffle(miniBatches.ToList(), rng);
+
+                    for (int batch = 0; batch < numBatches; batch++)
+                    {
+                        var item = shuffledMiniBatches[batch];
+                        epochLoss += _model.TrainStep(item.Inputs, item.Targets);
+
+                        // Correct parenthesis grouping for modulus
+                        if ((batch + 1) % 10 == 0 || batch == 0)
+                        {
+                            Console.ForegroundColor = ConsoleColor.Green;
+                            Log.Information($"Epoch {epoch + 1}, Batch {batch + 1} training loss: {epochLoss:F6}");
+                            Console.ResetColor();
+                        }
+                    }
                 }
 
                 epochLoss /= miniBatches.Count;
@@ -169,5 +228,18 @@ namespace SimpleTransformer.Api.Endpoints.Services
             }
             return miniBatches;
         }
+        //Sub batches will be a list of lists of mini batches
+        private IEnumerable<MiniBatch[]> CreateSubBatches(IReadOnlyList<MiniBatch> miniBatches, int chunkSize)
+        {
+            return miniBatches.Chunk(chunkSize);
+        }
+
+        public List<T> Shuffle<T>(IList<T> source, Random random)
+        {
+            if (source == null) throw new ArgumentNullException(nameof(source));
+            
+            TrainingServiceExtensions.ShuffleInPlace<T>(source, random);
+            return source.ToList();
+        }        
     }
 }

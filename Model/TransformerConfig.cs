@@ -114,12 +114,4 @@ namespace SimpleTransformer.Model
                     $"Embedding size ({EmbeddingSize}) must be divisible by the number of heads ({NumHeads}).");
         }      
     }
-    public class TrainingConfig
-    {
-        //Rates
-        public float LearningRate { get; set; } = 0.001f;
-        public int BatchSize { get; set; } = 8;
-        public int Epochs { get; set; } = 10;
-        public float DropoutRate { get; set; } = 0.0f;
-    }
 }
