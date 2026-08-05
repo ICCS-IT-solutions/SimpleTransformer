@@ -227,6 +227,8 @@ namespace SimpleTransformer.Model
             writer.Write(Parameters.Count());
             foreach (var param in Parameters)
             {
+                var paramName = param.Name;
+                writer.Write(paramName);
                 // Convert Value to TensorData
                 var valueData = new TensorData { Shape = param.Value.Shape, Data = param.Value.Data };
                 WriteTensor(writer, valueData);
@@ -523,10 +525,11 @@ namespace SimpleTransformer.Model
                 // Clean up transient forward & loss tensors for this step
                 DisposeIfDisposable(prediction);
                 DisposeIfDisposable(auxOutput);
-
+                _workspace.Reset();
                 // If _loss.Backward returns a cached tensor managed internally by _loss, 
                 // DO NOT dispose it here. Otherwise, dispose if it's transient:
             }
+            
         }
 
         private static void DisposeIfDisposable(object? obj)
