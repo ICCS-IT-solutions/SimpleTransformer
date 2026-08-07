@@ -8,12 +8,15 @@ using SimpleTransformer.Model.Extensions.Numerics;
 
 namespace SimpleTransformer.Model
 {
-    public class LinearLayer : ITrainableLayer
+    public class LinearLayer : ILinearLayer
     {
         public string Name { get; }
         private readonly int _inputSize;
+        public int InputSize => _inputSize;
         private readonly int _outputSize;
+        public int OutputSize => _outputSize;
         private readonly bool _useBias;
+        public bool UseBias => _useBias;
         private readonly TrainableParameter[] _parameters;
         public IEnumerable<TrainableParameter> Parameters => _parameters;
 

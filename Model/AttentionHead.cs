@@ -9,26 +9,35 @@ namespace SimpleTransformer.Model
     public class AttentionHead : ITrainableLayer
     {
         public string Name { get; }
-        private readonly LinearLayer _queryProjection;
-        private readonly LinearLayer _keyProjection;
-        private readonly LinearLayer _valueProjection;
+        private readonly ILinearLayer _queryProjection;
+        private readonly ILinearLayer _keyProjection;
+        private readonly ILinearLayer _valueProjection;
         private readonly ScaledDotProductAttention _attention;
 
-        public LinearLayer QueryProjection => _queryProjection;
-        public LinearLayer KeyProjection => _keyProjection;
-        public LinearLayer ValueProjection => _valueProjection;
+        public ILinearLayer QueryProjection => _queryProjection;
+        public ILinearLayer KeyProjection => _keyProjection;
+        public ILinearLayer ValueProjection => _valueProjection;
 
         public IEnumerable<TrainableParameter> Parameters =>
             _queryProjection.Parameters
                 .Concat(_keyProjection.Parameters)
                 .Concat(_valueProjection.Parameters);
 
-        public AttentionHead(int embeddingSize, int headSize, string name = "attention_head")
+        public AttentionHead(int embeddingSize, int headSize, string name = "attention_head", bool useQLora = false)
         {
             Name = name;
-            _queryProjection = new LinearLayer(embeddingSize, headSize, name: $"{name}.query");
-            _keyProjection   = new LinearLayer(embeddingSize, headSize, name: $"{name}.key");
-            _valueProjection = new LinearLayer(embeddingSize, headSize, name: $"{name}.value");
+            if(useQLora)
+            {
+                _queryProjection = new QLoraLinearLayer(embeddingSize, headSize, name: $"{name}.query");
+                _keyProjection   = new QLoraLinearLayer(embeddingSize, headSize, name: $"{name}.key");
+                _valueProjection = new QLoraLinearLayer(embeddingSize, headSize, name: $"{name}.value");
+            }
+            else
+            {
+                _queryProjection = new LinearLayer(embeddingSize, headSize, name: $"{name}.query");
+                _keyProjection   = new LinearLayer(embeddingSize, headSize, name: $"{name}.key");
+                _valueProjection = new LinearLayer(embeddingSize, headSize, name: $"{name}.value");
+            }
 
             _attention = new ScaledDotProductAttention(headSize);
         }

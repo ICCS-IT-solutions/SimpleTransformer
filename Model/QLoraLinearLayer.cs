@@ -8,14 +8,19 @@ using SimpleTransformer.Model.Extensions.Numerics;
 
 namespace SimpleTransformer.Model
 {
-    public class QLoraLinearLayer : ITrainableLayer
+    public class QLoraLinearLayer : ILinearLayer
     {
+        //Likely not used in QLoRA or LoRA, but here due to the interface requirement.
+        public Tensor Weights { get; private set; }
         public string Name { get; }
         private readonly int _inputSize;
+        public int InputSize => _inputSize;
         private readonly int _outputSize;
+        public int OutputSize => _outputSize;
         private readonly int _rank;
         private readonly float _loraScale; // alpha / rank
         private readonly bool _useBias;
+        public bool UseBias => _useBias;
 
         // Frozen Quantized Base Weight Data
         private readonly byte[] _quantizedWeights4Bit; // Packed 4-bit indices (2 values per byte)
@@ -29,6 +34,7 @@ namespace SimpleTransformer.Model
         private readonly Tensor _loraBGradient; // Shape: [outputSize, rank]
 
         private readonly Tensor? _bias;
+        public Tensor? Bias => _bias;
         private readonly Tensor? _biasGradient;
 
         public IEnumerable<TrainableParameter> Parameters => _parameters;

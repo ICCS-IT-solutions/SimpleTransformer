@@ -9,9 +9,9 @@ namespace SimpleTransformer.Model
     public class FeedForwardLayer : ITrainableLayer
     {
         public string Name { get; }
-        private readonly LinearLayer _expand;
+        private readonly ILinearLayer _expand;
         private readonly GeluLayer _activation;
-        private readonly LinearLayer _project;
+        private readonly ILinearLayer _project;
 
         public IEnumerable<TrainableParameter> Parameters
         {
@@ -25,12 +25,21 @@ namespace SimpleTransformer.Model
             }
         }
 
-        public FeedForwardLayer(int embeddingSize, int hiddenSize, string name = "feed_forward")
+        public FeedForwardLayer(int embeddingSize, int hiddenSize, string name = "feed_forward", bool useQLora = false)
         {
             Name = name;
-            _expand = new LinearLayer(embeddingSize, hiddenSize, useBias: true, name: $"{Name}.w1");
-            _activation = new GeluLayer();
-            _project = new LinearLayer(hiddenSize, embeddingSize, useBias: true, name: $"{Name}.w2");
+            if(useQLora)
+            {
+                _expand = new QLoraLinearLayer(embeddingSize, hiddenSize, useBias: true, name: $"{Name}.w1");
+                _activation = new GeluLayer();
+                _project = new QLoraLinearLayer(hiddenSize, embeddingSize, useBias: true, name: $"{Name}.w2");
+            }
+            else
+            {
+                _expand = new LinearLayer(embeddingSize, hiddenSize, useBias: true, name: $"{Name}.w1");
+                _activation = new GeluLayer();
+                _project = new LinearLayer(hiddenSize, embeddingSize, useBias: true, name: $"{Name}.w2");
+            }
         }
 
         public TensorBase Forward(TensorBase input, TensorWorkspace workspace)

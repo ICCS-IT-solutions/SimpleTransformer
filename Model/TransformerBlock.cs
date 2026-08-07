@@ -39,6 +39,7 @@ namespace SimpleTransformer.Model
             ITrainableLayer feedForward, 
             ITrainableLayer layerNorm1, 
             ITrainableLayer layerNorm2, 
+            bool useQLora = false,
             string name = "transformer_block")
         {
             Name = name;

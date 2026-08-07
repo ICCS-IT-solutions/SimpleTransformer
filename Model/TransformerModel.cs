@@ -13,7 +13,7 @@ namespace SimpleTransformer.Model
     {
         //These don't yet exist, but are created when the constructor calls BuildModel(). 
         private EmbeddingLayer _embedding = null!;
-        private LinearLayer _outputProjection = null!;
+        private ILinearLayer _outputProjection = null!;
         private PositionalEncodingLayer _position = null!;
         private TensorWorkspace _workspace = null!;       
         public IEnumerable<TrainableParameter> Parameters
@@ -93,7 +93,7 @@ namespace SimpleTransformer.Model
             ValidateConfig();
             Log.Information("Configuration is valid. Proceeding...");
 
-            BuildModel();
+            BuildModel(useQLora: true);
             Log.Information("Transformer model ready to be loaded.");
         }
 
@@ -575,12 +575,14 @@ namespace SimpleTransformer.Model
                 throw new ArgumentException(
                     "Embedding size must be divisible by the number of heads.");
         }
-        private void BuildModel()
+        private void BuildModel(bool useQLora = false)
         {
             // 1. Root-level layers with clean, standard names
             _embedding = new EmbeddingLayer(Config.VocabSize, Config.EmbeddingSize, name: "token_embeddings");
             _position = new PositionalEncodingLayer(Config.EmbeddingSize, Config.MaxSequenceLength, name: "position_embeddings");
-            _outputProjection = new LinearLayer(Config.EmbeddingSize, Config.VocabSize, useBias: false, name: "lm_head");
+            _outputProjection = useQLora 
+            ? new QLoraLinearLayer(Config.EmbeddingSize, Config.VocabSize, useBias: false, name: "lm_head")
+            : new LinearLayer(Config.EmbeddingSize, Config.VocabSize, useBias: false, name: "lm_head");
             _workspace = new TensorWorkspace();
 
             _loss = new CrossEntropyLoss();
@@ -626,7 +628,8 @@ namespace SimpleTransformer.Model
                 var attention = new MultiHeadAttention(
                     Config.EmbeddingSize,
                     Config.NumHeads,
-                    name: $"{blockName}.attention"
+                    name: $"{blockName}.attention",
+                    useQLora
                 );
                 Log.Information($"Layer {i}: Attention layer constructed in {componentWatch.ElapsedMilliseconds}ms.");
                 componentWatch.Restart();
@@ -634,7 +637,8 @@ namespace SimpleTransformer.Model
                 var feedForward = new FeedForwardLayer(
                     Config.EmbeddingSize,
                     Config.FeedForwardSize,
-                    name: $"{blockName}.feed_forward"
+                    name: $"{blockName}.feed_forward",
+                    useQLora
                 );
                 Log.Information($"Layer {i}: Feed forward layer constructed in {componentWatch.ElapsedMilliseconds}ms.");
                 componentWatch.Restart();

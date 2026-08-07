@@ -10,7 +10,7 @@ namespace SimpleTransformer.Model
     {
         public string Name { get; }
         private readonly AttentionHead[] _heads;
-        private readonly LinearLayer _outputProjection;
+        private readonly ILinearLayer _outputProjection;
         private readonly int _embeddingSize;
         private readonly int _headSize;
 
@@ -29,7 +29,7 @@ namespace SimpleTransformer.Model
             }
         }
 
-        public MultiHeadAttention(int embeddingSize, int numHeads, string name = "attention")
+        public MultiHeadAttention(int embeddingSize, int numHeads, string name = "attention", bool useQLora = false)
         {
             if (embeddingSize % numHeads != 0) 
                 throw new ArgumentException("Embedding size must be divisible by number of heads.");
@@ -41,10 +41,12 @@ namespace SimpleTransformer.Model
 
             for (int i = 0; i < numHeads; i++)
             {
-                _heads[i] = new AttentionHead(embeddingSize, _headSize, name: $"{Name}.heads.{i}");
+                _heads[i] = new AttentionHead(embeddingSize, _headSize, name: $"{Name}.heads.{i}", useQLora);
             }
 
-            _outputProjection = new LinearLayer(embeddingSize, embeddingSize, useBias: false, name: $"{Name}.out_proj");
+            _outputProjection = useQLora
+                ? new QLoraLinearLayer(embeddingSize, embeddingSize, useBias: false, name: $"{Name}.out_proj")
+                : new LinearLayer(embeddingSize, embeddingSize, useBias: false, name: $"{Name}.out_proj");
         }
 
         // Standard ILayer entry points

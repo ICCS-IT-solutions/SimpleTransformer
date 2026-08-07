@@ -15,8 +15,10 @@
   </PropertyGroup> -->
 
   <ItemGroup>
+    <PackageReference Include="MathNet.Numerics" Version="5.0.0" />
     <PackageReference Include="Microsoft.AspNetCore" Version="2.3.11" />
     <PackageReference Include="Microsoft.AspNetCore.Mvc" Version="2.3.11" />
+    <PackageReference Include="NumSharp" Version="0.60.0" />
     <PackageReference Include="Pomelo.EntityFrameworkCore.MySql" Version="9.0.0" />
     <PackageReference Include="Serilog" Version="4.4.0" />
     <PackageReference Include="Serilog.AspNetCore" Version="10.0.0" />
@@ -26,6 +28,7 @@
     <PackageReference Include="Silk.NET.WebGPU" Version="2.23.0" />
     <!-- <PackageReference Include="Swashbuckle" Version="5.6.0" /> -->
     <PackageReference Include="Swashbuckle.AspNetCore" Version="10.2.3" />
+    <PackageReference Include="TorchSharp" Version="0.107.0" />
   </ItemGroup>
 
 </Project>
