@@ -9,7 +9,7 @@ namespace SimpleTransformer.Model
 
         public Tensor Value { get; }
 
-        public Tensor Gradient { get; }
+        public Tensor? Gradient { get; set; }
 
         public TrainableParameter(string name, Tensor value, Tensor gradient)
         {

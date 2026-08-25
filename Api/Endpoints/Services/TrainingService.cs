@@ -1,5 +1,7 @@
 using System.Collections.ObjectModel;
 using System.IO;
+using System.Text.Encodings.Web;
+using System.Text.Json;
 using System.Threading.Tasks;
 using Serilog;
 using SimpleTransformer.Api.Requests;
@@ -14,6 +16,7 @@ namespace SimpleTransformer.Api.Endpoints.Services
     {
         private TransformerModel _model;
         private readonly ITokenizer _tokenizer;
+        private readonly List<TrainingJobEntry> _jobs = new();
 
         public TrainingService(TransformerModel model, ITokenizer tokenizer)
         {
@@ -32,12 +35,26 @@ namespace SimpleTransformer.Api.Endpoints.Services
                     StatusCode = 400
                 };
             }
-
+            var job = new TrainingJobEntry
+            {
+                JobId = Guid.NewGuid(),                
+                Status = TrainingJobStatus.Pending,
+                Message = "Training job created.",
+                LastUpdatedAt = DateTime.UtcNow
+            };
             int startEpoch = 0;
+
+            //Register the job.
+            RegisterJob(job);
 
             // 1. Resume from checkpoint using TransformerModel's load logic
             if (!string.IsNullOrWhiteSpace(req.PreviousCheckpoint) && File.Exists(req.PreviousCheckpoint))
             {
+                UpdateJob(job.JobId, job =>
+                {
+                    job.Message = "Loading previous checkpoint...";
+                });
+
                 Log.Information("Loading training state from checkpoint: {Path}", req.PreviousCheckpoint);
                 
                 await using var stream = File.OpenRead(req.PreviousCheckpoint);
@@ -45,7 +62,13 @@ namespace SimpleTransformer.Api.Endpoints.Services
                 
                 _model = loadedModel;
                 startEpoch = savedEpoch + 1; // Resume on the next epoch
-                
+
+                UpdateJob(job.JobId, job =>
+                {
+                    job.Message = $"Resuming training from epoch {startEpoch}.";
+                    job.CurrentEpoch = startEpoch;
+                    job.CurrentLoss = savedLoss;
+                });
                 Log.Information("Resuming training from Epoch {Epoch} (Last Loss: {Loss:F6})", startEpoch + 1, savedLoss);
             }
 
@@ -65,7 +88,18 @@ namespace SimpleTransformer.Api.Endpoints.Services
             // Zero-allocation chunking using .NET 6+ Chunk()
             var subBatches = miniBatches.Chunk(chunkSize);
 
-            var totalEpochs = startEpoch + req.Config?.Epochs ?? 10; // Default to 10 epochs if not specified
+            var totalEpochs = startEpoch + (req.Config?.Epochs ?? 10); // Default to 10 epochs if not specified
+
+            //Update the job status
+            UpdateJob(job.JobId, job =>
+            {
+                job.Status = TrainingJobStatus.Started;
+                job.CurrentEpoch = startEpoch;
+                job.TotalEpochs = totalEpochs;
+                job.CurrentBatch = 0;
+                job.TotalBatches = numBatches;
+                job.Message = $"Training prepared: {samples.Count} samples in {numBatches} batches.";
+            });
 
             // 2. Training loop
             for (int epoch = startEpoch; epoch < totalEpochs; epoch++)
@@ -74,6 +108,15 @@ namespace SimpleTransformer.Api.Endpoints.Services
                 // Single Random instance reused across the engine
                 var rng = new Random();
 
+                UpdateJob(job.JobId, job =>
+                {
+                    job.Status = TrainingJobStatus.Running;
+                    job.CurrentEpoch = epoch + 1;
+                    job.CurrentBatch = 0;
+                    job.CurrentLoss = 0;
+                    job.Message = $"Training epoch {epoch + 1} of {totalEpochs}.";
+                });
+
                 if (numBatches > 8)
                 {
                     // Shuffle the outer sub-batch groups ONCE per epoch
@@ -81,6 +124,20 @@ namespace SimpleTransformer.Api.Endpoints.Services
 
                     for (int batch = 0; batch < shuffledSubBatches.Count; batch++)
                     {
+                        if ((batch + 1) % 5 == 0 ||
+                            batch == 0 ||
+                            batch == numBatches - 1)
+                        {
+                            UpdateJob(job.JobId, job =>
+                            {
+                                job.CurrentBatch = batch + 1;
+                                job.CurrentLoss = epochLoss;
+
+                                job.Message =
+                                    $"Epoch {epoch + 1}/{totalEpochs}, " +
+                                    $"batch {batch + 1}/{numBatches}.";
+                            });
+                        }
                         var currentSubBatch = shuffledSubBatches[batch];
 
                         for (int subBatch = 0; subBatch < currentSubBatch.Count(); subBatch++)
@@ -99,6 +156,7 @@ namespace SimpleTransformer.Api.Endpoints.Services
                         string checkpointFileName = Path.Combine("checkpoints", $"checkpoint-epoch-{epoch}-temp.bin");
                         await using var stream = File.Create(checkpointFileName);
                         _model.SaveCheckpoint(stream, epoch, epochLoss);
+                        UpdateJob(job.JobId, job => job.Checkpoint = checkpointFileName);
                     }
                 }
                 else
@@ -125,6 +183,15 @@ namespace SimpleTransformer.Api.Endpoints.Services
 
                 Log.Information($"Epoch {epoch + 1}: Loss={epochLoss:F6}");
 
+                UpdateJob(job.JobId, job =>
+                {
+                    job.CurrentEpoch = epoch + 1;
+                    job.CurrentBatch = numBatches;
+                    job.CurrentLoss = epochLoss;
+                    job.Message =
+                        $"Epoch {epoch + 1} of {totalEpochs} completed.";
+                });
+
                 // Save checkpoint periodically via TransformerModel. Every 5 epochs or on the last epoch, save a checkpoint
                 if ((epoch + 1) % 5 == 0 || epoch == req.Config.Epochs - 1)
                 {
@@ -133,10 +200,26 @@ namespace SimpleTransformer.Api.Endpoints.Services
                     await using var stream = File.Create(checkpointFileName);
                     _model.SaveCheckpoint(stream, epoch, epochLoss);
                     
+                    UpdateJob(job.JobId, job =>
+                    {
+                        job.Checkpoint = checkpointFileName;
+                        job.CurrentLoss = epochLoss;
+                        job.Message =
+                            $"Epoch {epoch + 1} completed. Checkpoint saved.";
+                    });
                     Log.Information("Saved checkpoint to {FileName}", checkpointFileName);
                 }
             }
 
+            //Update the job status
+            UpdateJob(job.JobId, job =>
+            {
+                job.Status = TrainingJobStatus.Completed;
+                job.CurrentEpoch = totalEpochs;
+                job.CurrentBatch = job.TotalBatches;
+                job.Message = "Model training completed successfully.";
+                job.CompletedAt = DateTime.UtcNow;
+            });
             return new ApiResponse<TrainingResponse>
             {
                 Message = "Model trained successfully",
@@ -171,6 +254,29 @@ namespace SimpleTransformer.Api.Endpoints.Services
             return await TrainModelFromText(request);
         }
 
+        private void RegisterJob(TrainingJobEntry jobEntry)
+        {
+            var job = _jobs.FirstOrDefault(x => x.JobId == jobEntry.JobId);
+            //If it exists, do nothing
+            if (job != null)
+                return;
+            //Else, add
+            else
+                _jobs.Add(jobEntry);
+        }
+
+        private void UpdateJob(Guid jobId, Action<TrainingJobEntry> update)
+        {
+            var jobEntry = _jobs.FirstOrDefault(x => x.JobId == jobId);
+
+            if (jobEntry == null)
+                return;
+
+            update(jobEntry);
+
+            jobEntry.LastUpdatedAt = DateTime.UtcNow;
+        }
+        
         private IReadOnlyList<TrainingSample> CreateTrainingSamples(string src)
         {
             int[] tokens = _tokenizer.Encode(src);
@@ -193,6 +299,68 @@ namespace SimpleTransformer.Api.Endpoints.Services
             }
 
             return data;
+        }
+
+        public Task<ApiResponse<TrainingProgressResponse>> GetTrainingProgress(Guid jobId)
+        {
+            var job = _jobs.FirstOrDefault(x => x.JobId == jobId);
+
+            if (job == null)
+            {
+                return Task.FromResult(new ApiResponse<TrainingProgressResponse>
+                {
+                    Message = "Training job not found.",
+                    Status = ResponseStatus.Failure,
+                    StatusCode = 404
+                });
+            }
+
+            return Task.FromResult(new ApiResponse<TrainingProgressResponse>
+            {
+                Message = job.Message,
+                Status = ResponseStatus.Success,
+                StatusCode = 200,
+                Data = new TrainingProgressResponse
+                {
+                    JobId = job.JobId.ToString(),
+                    Status = job.Status,
+                    CurrentEpoch = job.CurrentEpoch,
+                    TotalEpochs = job.TotalEpochs,
+                    CurrentBatch = job.CurrentBatch,
+                    TotalBatches = job.TotalBatches,
+                    CurrentLoss = job.CurrentLoss,
+                    Checkpoint = job.Checkpoint,
+                    StartedAt = job.StartedAt,
+                    CompletedAt = job.CompletedAt,
+                    LastUpdatedAt = job.LastUpdatedAt,
+                    Error = job.Error ?? "none"
+                }
+            });
+        }
+
+        public async Task<ApiResponse<List<TrainingProgressResponse>>> GetTrainingJobs()
+        {
+            return new ApiResponse<List<TrainingProgressResponse>>
+            {
+                Message = "Training jobs found.",
+                Status = ResponseStatus.Success,
+                StatusCode = 200,
+                Data = _jobs.Select(x => new TrainingProgressResponse
+                {
+                    JobId = x.JobId.ToString(),
+                    Status = x.Status,
+                    CurrentEpoch = x.CurrentEpoch,
+                    TotalEpochs = x.TotalEpochs,
+                    CurrentBatch = x.CurrentBatch,
+                    TotalBatches = x.TotalBatches,
+                    CurrentLoss = x.CurrentLoss,
+                    Checkpoint = x.Checkpoint,
+                    StartedAt = x.StartedAt,
+                    CompletedAt = x.CompletedAt,
+                    LastUpdatedAt = x.LastUpdatedAt,
+                    Error = x.Error ?? "none"
+                }).ToList()
+            };
         }
 
         private IReadOnlyList<MiniBatch> CreateMiniBatches(IReadOnlyList<TrainingSample> samples)
@@ -228,10 +396,11 @@ namespace SimpleTransformer.Api.Endpoints.Services
             }
             return miniBatches;
         }
-        //Sub batches will be a list of lists of mini batches
-        private IEnumerable<MiniBatch[]> CreateSubBatches(IReadOnlyList<MiniBatch> miniBatches, int chunkSize)
+        //Debug purposes only. Write the checkpoint data to a json file
+        private async Task WriteCheckpointDataToFile(IReadOnlyList<TrainableParameterCheckpoint> checkpointParameters)
         {
-            return miniBatches.Chunk(chunkSize);
+            string json = JsonSerializer.Serialize(checkpointParameters, new JsonSerializerOptions { WriteIndented = true, Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping });
+            await File.WriteAllTextAsync("checkpoint-debugdata.json", json);
         }
 
         public List<T> Shuffle<T>(IList<T> source, Random random)

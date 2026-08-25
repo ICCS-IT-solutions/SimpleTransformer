@@ -51,4 +51,12 @@ namespace SimpleTransformer.Api
             Status = ResponseStatus.Error;
         }
     };  
+
+    public class Payload<D>
+    {
+        //This is the status passed along to the consumer, typically the frontend
+        public int Status { get; set; }
+        //This could be anything, even a string.
+        public D? Data { get; set; }
+    }
 }

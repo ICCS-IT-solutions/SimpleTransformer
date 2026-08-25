@@ -6,6 +6,13 @@ namespace SimpleTransformer.Model
 {
     public class CrossEntropyLoss : ILossFunction
     {
+        private readonly int _ignoreIndex;
+
+        public CrossEntropyLoss(int ignoreIndex = -100)
+        {
+            _ignoreIndex = ignoreIndex;
+        }
+
         public float Forward(TensorBase prediction, TensorBase target)
         {
             return prediction.Rank switch
@@ -30,19 +37,28 @@ namespace SimpleTransformer.Model
         {
             TensorUtilitiesSimd.ValidatePredictionAndTarget(prediction, target);
             float totalLoss = 0f;
+            int totalValidTokens = 0;
 
             for (int batch = 0; batch < prediction.Layers; batch++)
             {
                 TensorBase predictionSlice = TensorUtilitiesSimd.GetLayer(prediction, batch);
                 TensorBase targetSlice = TensorUtilitiesSimd.GetRow(target, batch);
 
-                totalLoss += ForwardSequence(predictionSlice, targetSlice);
+                (float batchLoss, int validTokens) = ForwardSequenceWithCount(predictionSlice, targetSlice);
+                totalLoss += batchLoss;
+                totalValidTokens += validTokens;
             }
 
-            return totalLoss / prediction.Layers;
+            return totalValidTokens > 0 ? totalLoss / totalValidTokens : 0f;
         }
 
         private float ForwardSequence(TensorBase prediction, TensorBase target)
+        {
+            (float totalLoss, int validTokens) = ForwardSequenceWithCount(prediction, target);
+            return validTokens > 0 ? totalLoss / validTokens : 0f;
+        }
+
+        private (float TotalLoss, int ValidTokens) ForwardSequenceWithCount(TensorBase prediction, TensorBase target)
         {
             TensorUtilitiesSimd.ValidatePredictionAndTarget(prediction, target);
 
@@ -52,96 +68,102 @@ namespace SimpleTransformer.Model
             int rows = prediction.Rows;
             int cols = prediction.Cols;
 
-            if (rows == 0) return 0f;
-
             float totalLoss = 0f;
+            int validTokens = 0;
 
             for (int r = 0; r < rows; r++)
             {
                 int tokenId = (int)targetData[r];
+
+                // Skip ignored tokens (e.g. padding)
+                if (tokenId == _ignoreIndex)
+                    continue;
 
                 if ((uint)tokenId >= (uint)cols)
                     throw new ArgumentOutOfRangeException(nameof(target), $"Target token {tokenId} is outside vocabulary range [0, {cols - 1}].");
 
                 ReadOnlySpan<float> rowLogits = predData.Slice(r * cols, cols);
 
-                // Find max non-infinite value to prevent (-Inf - (-Inf)) -> NaN
+                // Safe Max Calculation ignoring -Inf
                 float maxVal = float.MinValue;
                 for (int c = 0; c < cols; c++)
                 {
                     float v = rowLogits[c];
                     if (!float.IsNegativeInfinity(v) && v > maxVal)
-                    {
                         maxVal = v;
-                    }
                 }
-
-                // Fallback if the entire row was masked or uninitialized
-                if (maxVal == float.MinValue)
-                {
-                    maxVal = 0f;
-                }
+                if (maxVal == float.MinValue) maxVal = 0f;
 
                 float sumExp = 0f;
                 for (int c = 0; c < cols; c++)
                 {
                     float val = rowLogits[c];
-                    if (float.IsNegativeInfinity(val) || val <= -1e20f) 
+                    if (float.IsNegativeInfinity(val) || val <= -1e20f)
                         continue;
 
                     sumExp += MathF.Exp(val - maxVal);
                 }
 
-                if (sumExp <= 0f || float.IsNaN(sumExp))
-                {
-                    sumExp = float.Epsilon; 
-                }
+                if (sumExp <= 0f || float.IsNaN(sumExp)) sumExp = float.Epsilon;
 
                 float targetLogit = rowLogits[tokenId];
-                float logSoftmaxTarget;
-
-                if (float.IsNegativeInfinity(targetLogit))
-                {
-                    logSoftmaxTarget = -100f; // Penalize predicting a masked token
-                }
-                else
-                {
-                    logSoftmaxTarget = (targetLogit - maxVal) - MathF.Log(sumExp);
-                }
+                float logSoftmaxTarget = float.IsNegativeInfinity(targetLogit) 
+                    ? -100f 
+                    : (targetLogit - maxVal) - MathF.Log(sumExp);
 
                 if (float.IsNaN(logSoftmaxTarget) || float.IsInfinity(logSoftmaxTarget))
-                {
                     logSoftmaxTarget = -100f;
-                }
 
                 totalLoss -= logSoftmaxTarget;
+                validTokens++;
             }
 
-            float finalLoss = totalLoss / rows;
-            return float.IsNaN(finalLoss) ? 0f : finalLoss;
+            return (totalLoss, validTokens);
         }
 
         private TensorBase BackwardBatch(TensorBase prediction, TensorBase target)
         {
             TensorUtilitiesSimd.ValidatePredictionAndTarget(prediction, target);
-
             TensorBase gradient = new Tensor(prediction.Layers, prediction.Rows, prediction.Cols);
+
+            // Count total active tokens in batch to scale gradient accurately
+            ReadOnlySpan<float> targetData = target.Data.AsSpan();
+            int totalValidTokens = 0;
+            for (int i = 0; i < targetData.Length; i++)
+            {
+                if ((int)targetData[i] != _ignoreIndex)
+                    totalValidTokens++;
+            }
+
+            float scale = totalValidTokens > 0 ? 1f / totalValidTokens : 0f;
 
             for (int batch = 0; batch < prediction.Layers; batch++)
             {
                 TensorBase predictionSlice = TensorUtilitiesSimd.GetLayer(prediction, batch);
                 TensorBase targetSlice = TensorUtilitiesSimd.GetRow(target, batch);
 
-                TensorBase gradSlice = BackwardSequence(predictionSlice, targetSlice);
-
+                TensorBase gradSlice = BackwardSequenceInternal(predictionSlice, targetSlice, scale);
                 TensorUtilitiesSimd.SetLayer(gradient, batch, gradSlice);
             }
 
-            TensorMathSimd.ScaleInPlace(gradient, 1f / prediction.Layers);
             return gradient;
         }
 
         private TensorBase BackwardSequence(TensorBase prediction, TensorBase target)
+        {
+            ReadOnlySpan<float> targetData = target.Data.AsSpan();
+            int validTokens = 0;
+            for (int i = 0; i < targetData.Length; i++)
+            {
+                if ((int)targetData[i] != _ignoreIndex)
+                    validTokens++;
+            }
+
+            float scale = validTokens > 0 ? 1f / validTokens : 0f;
+            return BackwardSequenceInternal(prediction, target, scale);
+        }
+
+        private TensorBase BackwardSequenceInternal(TensorBase prediction, TensorBase target, float scale)
         {
             TensorUtilitiesSimd.ValidatePredictionAndTarget(prediction, target);
 
@@ -157,35 +179,58 @@ namespace SimpleTransformer.Model
             for (int r = 0; r < rows; r++)
             {
                 int tokenId = (int)targetData[r];
-
-                ReadOnlySpan<float> rowLogits = predData.Slice(r * cols, cols);
                 Span<float> rowGrad = gradData.Slice(r * cols, cols);
 
-                // Compute Softmax probabilities for gradient: p = exp(x - max) / sum(exp(x - max))
-                float maxVal = TensorMathSimd.Max(rowLogits);
-                float sumExp = 0f;
+                // If token is padding/ignored, leave gradient row as 0s
+                if (tokenId == _ignoreIndex)
+                    continue;
 
+                ReadOnlySpan<float> rowLogits = predData.Slice(r * cols, cols);
+
+                // Robust max-finding ignoring -Inf logits
+                float maxVal = float.MinValue;
                 for (int c = 0; c < cols; c++)
                 {
-                    float p = MathF.Exp(rowLogits[c] - maxVal);
+                    float v = rowLogits[c];
+                    if (!float.IsNegativeInfinity(v) && v > maxVal)
+                        maxVal = v;
+                }
+                if (maxVal == float.MinValue) maxVal = 0f;
+
+                float sumExp = 0f;
+                for (int c = 0; c < cols; c++)
+                {
+                    float val = rowLogits[c];
+                    if (float.IsNegativeInfinity(val) || val <= -1e20f)
+                    {
+                        rowGrad[c] = 0f;
+                        continue;
+                    }
+
+                    float p = MathF.Exp(val - maxVal);
                     rowGrad[c] = p;
                     sumExp += p;
                 }
 
-                float invSum = 1f / sumExp;
+                float invSum = sumExp > 0f ? 1f / sumExp : 0f;
 
-                // Scale row by 1/sumExp to complete Softmax calculation
                 for (int c = 0; c < cols; c++)
                 {
-                    rowGrad[c] *= invSum;
+                    if (rowGrad[c] != 0f)
+                    {
+                        rowGrad[c] *= invSum;
+                    }
                 }
 
-                // Gradient of CE + Softmax: dL/dz = (p_i - y_i)
+                // dL/dz = (p_i - 1) for target class
                 rowGrad[tokenId] -= 1f;
-            }
 
-            // Average across sequence length
-            TensorMathSimd.ScaleInPlace(gradient, 1f / rows);
+                // Scale by 1 / N_valid_tokens across batch
+                for (int c = 0; c < cols; c++)
+                {
+                    rowGrad[c] *= scale;
+                }
+            }
 
             return gradient;
         }

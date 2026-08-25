@@ -35,5 +35,18 @@ namespace SimpleTransformer.Api.Endpoints.Controllers
         {
             return await _trainingService.TrainModelFromTextFile(req);
         }
+
+        //This may come in as a string, so if it does, I need to parse it as a guid.
+        [HttpGet("api/v1/train/jobs/{jobId}")]
+        public async Task<ApiResponse<TrainingProgressResponse>> GetTrainingProgress(Guid jobId)
+        {
+            return await _trainingService.GetTrainingProgress(jobId);
+        }
+
+        [HttpGet("api/v1/train/jobs")]
+        public async Task<ApiResponse<List<TrainingProgressResponse>>> GetTrainingJobs()
+        {
+            return await _trainingService.GetTrainingJobs();
+        }
     }
 }

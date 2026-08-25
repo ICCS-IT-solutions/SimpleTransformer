@@ -217,28 +217,32 @@ namespace SimpleTransformer.Model
         {
             using var writer = new BinaryWriter(destinationStream, Encoding.UTF8, leaveOpen: true);
             
-            writer.Write("STCK".ToCharArray()); // Magic header
-            writer.Write(1);                    // Schema version
+            // Fixed 4-byte header (no length prefix)
+            writer.Write("STCK"u8); 
+            writer.Write(1); // Schema version
             writer.Write(currentEpoch);
             writer.Write(currentLoss);
 
             CheckpointConfigExtensions.WriteConfig(writer, Config);
 
-            writer.Write(Parameters.Count());
-            foreach (var param in Parameters)
+            var paramList = Parameters as IReadOnlyCollection<TrainableParameter> ?? Parameters.ToList();
+            writer.Write(paramList.Count);
+
+            foreach (var param in paramList)
             {
-                var paramName = param.Name;
-                writer.Write(paramName);
-                // Convert Value to TensorData
+                // 1. Parameter Name
+                writer.Write(param.Name);
+
+                // 2. Value Tensor
                 var valueData = new TensorData { Shape = param.Value.Shape, Data = param.Value.Data };
                 WriteTensor(writer, valueData);
 
+                // 3. Gradient Tensor (optional)
                 bool hasGrad = param.Gradient != null;
                 writer.Write(hasGrad);
 
                 if (hasGrad)
                 {
-                    // Convert Gradient to TensorData
                     var gradData = new TensorData { Shape = param.Gradient!.Shape, Data = param.Gradient!.Data };
                     WriteTensor(writer, gradData);
                 }
@@ -247,7 +251,6 @@ namespace SimpleTransformer.Model
 
         private static void WriteTensor(BinaryWriter writer, TensorData tensor)
         {
-            // 1. Guard check to ensure buffer and shape dimensions match
             if (!tensor.IsValid)
             {
                 throw new InvalidOperationException(
@@ -255,16 +258,13 @@ namespace SimpleTransformer.Model
                     $"does not match shape product ({tensor.TotalElements}).");
             }
 
-            // 2. Write rank (number of dimensions)
             writer.Write(tensor.Shape.Length);
 
-            // 3. Write shape dimensions
             for (int i = 0; i < tensor.Shape.Length; i++)
             {
                 writer.Write(tensor.Shape[i]);
             }
 
-            // 4. Zero-copy write float buffer directly to stream
             ReadOnlySpan<byte> byteBuffer = MemoryMarshal.AsBytes(tensor.Data.AsSpan());
             writer.BaseStream.Write(byteBuffer);
         }
@@ -288,11 +288,17 @@ namespace SimpleTransformer.Model
         {
             using var reader = new BinaryReader(sourceStream, Encoding.UTF8, leaveOpen: true);
 
-            string magic = new string(reader.ReadChars(4));
+            // Read fixed 4-byte header directly
+            byte[] magicBytes = reader.ReadBytes(4);
+            string magic = Encoding.UTF8.GetString(magicBytes);
+
             if (magic != "STCK")
                 throw new InvalidDataException($"Invalid checkpoint file magic header: '{magic}'. Expected 'STCK'.");
 
             int version = reader.ReadInt32();
+            if (version != 1)
+                throw new InvalidDataException($"Unsupported checkpoint schema version: {version}. Expected 1.");
+
             int epoch = reader.ReadInt32();
             float loss = reader.ReadSingle();
 
@@ -304,50 +310,27 @@ namespace SimpleTransformer.Model
 
             for (int i = 0; i < paramCount; i++)
             {
+                // 1. Read Parameter Name (matches SaveCheckpoint sequence)
+                string name = reader.ReadString();
+
+                // 2. Read Value Tensor
                 var val = ReadTensorOptimized(reader);
+
+                // 3. Read Gradient Tensor if present
                 bool hasGrad = reader.ReadBoolean();
                 TensorData? grad = hasGrad ? ReadTensorOptimized(reader) : null;
 
-                loadedParameters.Add(new TrainableParameterCheckpoint { Value = val, Gradient = grad });
+                loadedParameters.Add(new TrainableParameterCheckpoint 
+                { 
+                    Name = name, 
+                    Value = val, 
+                    Gradient = grad 
+                });
             }
 
             model.LoadCheckpointData(loadedParameters);
             return (model, epoch, loss);
-        }        
-
-        private static TensorData ReadTensor(BinaryReader reader)
-        {
-            int rank = reader.ReadInt32();
-            if (rank < 0 || rank > 8) // Reasonable guardrail against corrupted headers
-            {
-                throw new InvalidDataException($"Invalid tensor rank: {rank}");
-            }
-
-            int[] shape = new int[rank];
-            int totalElements = 1;
-
-            for (int i = 0; i < rank; i++)
-            {
-                shape[i] = reader.ReadInt32();
-                totalElements *= shape[i];
-            }
-
-            float[] data = new float[totalElements];
-            Span<byte> byteBuffer = MemoryMarshal.AsBytes(data.AsSpan());
-
-            int bytesRead = reader.BaseStream.Read(byteBuffer);
-            if (bytesRead < byteBuffer.Length)
-            {
-                throw new EndOfStreamException(
-                    $"Expected {byteBuffer.Length} bytes for tensor payload, but only read {bytesRead}.");
-            }
-
-            return new TensorData
-            {
-                Shape = shape,
-                Data = data
-            };
-        }
+        }       
 
         private static TensorData ReadTensorOptimized(BinaryReader reader)
         {
@@ -364,16 +347,14 @@ namespace SimpleTransformer.Model
             {
                 shape[i] = reader.ReadInt32();
                 
-                // Guard against negative or absurdly large individual dimensions
                 if (shape[i] <= 0 || shape[i] > 100_000_000) 
                 {
                     throw new InvalidDataException($"Corrupt checkpoint format: dimension [{i}] has invalid size ({shape[i]}).");
                 }
 
-                // Prevent overflow before multiplying
                 if (totalElements > (long.MaxValue / shape[i]))
                 {
-                    throw new InvalidDataException($"Corrupt checkpoint format: calculated tensor size exceeds maximum allowable limits.");
+                    throw new InvalidDataException("Corrupt checkpoint format: calculated tensor size exceeds maximum allowable limits.");
                 }
 
                 totalElements *= shape[i];
@@ -394,17 +375,17 @@ namespace SimpleTransformer.Model
                 Shape = shape,
                 Data = data
             };
-        }       
+        }      
 
         /// <summary>
         /// Hydrates model weight (and optional gradient) tensors from a loaded checkpoint using parameter names.
         /// </summary>
         public void LoadCheckpointData(IReadOnlyList<TrainableParameterCheckpoint> checkpointParameters)
         {
-            // Build a lookup dictionary from checkpoint parameters using their name/identifier
             var checkpointMap = checkpointParameters.ToDictionary(p => p.Name, p => p);
-
             var modelParameters = Parameters.ToList();
+
+            using var debugFileWriter = new StreamWriter("checkpoint-debug.log", append: true);
 
             if (modelParameters.Count != checkpointParameters.Count)
             {
@@ -414,24 +395,22 @@ namespace SimpleTransformer.Model
 
             foreach (var targetParam in modelParameters)
             {
-                // 1. Verify parameter existence in checkpoint by Name
+                //Todo: Implement diagnostic logging to file for checkpoint save/load.
+                //This should not be live logged, just dumped to a file for debugging purposes and to see that names are properly loaded and saved.
                 if (!checkpointMap.TryGetValue(targetParam.Name, out var loadedParam))
                 {
                     throw new InvalidOperationException(
                         $"Parameter '{targetParam.Name}' missing from checkpoint data.");
                 }
 
-                // 2. Verify shape compatibility
                 if (!Enumerable.SequenceEqual(targetParam.Value.Shape, loadedParam.Value.Shape))
                 {
                     throw new InvalidOperationException(
                         $"Parameter shape mismatch for '{targetParam.Name}'. Expected [{string.Join(',', targetParam.Value.Shape)}], but checkpoint has [{string.Join(',', loadedParam.Value.Shape)}].");
                 }
 
-                // 3. Fast copy of raw float data into live model tensors
                 Array.Copy(loadedParam.Value.Data, targetParam.Value.Data, targetParam.Value.Data.Length);
 
-                // 4. Hydrate gradients if present and target expects them
                 if (loadedParam.Gradient != null && targetParam.Gradient != null)
                 {
                     if (!Enumerable.SequenceEqual(targetParam.Gradient.Shape, loadedParam.Gradient.Shape))
@@ -442,6 +421,7 @@ namespace SimpleTransformer.Model
 
                     Array.Copy(loadedParam.Gradient.Data, targetParam.Gradient.Data, targetParam.Gradient.Data.Length);
                 }
+                debugFileWriter.WriteLine($"Loaded parameter '{targetParam.Name}' with value {targetParam.Value.Data.Length} and {(targetParam.Gradient != null ? $"gradient {targetParam.Gradient.Data.Length}" : "no gradient")} from checkpoint.");
             }
 
             Log.Information("Successfully hydrated {Count} model weight tensors from checkpoint by parameter name.", modelParameters.Count);

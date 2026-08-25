@@ -4,19 +4,20 @@ using SimpleTransformer.Model.Extensions.Numerics;
 
 namespace SimpleTransformer.Model
 {
-    // Keeping US spelling consistency as requested
     public class AdamWOptimizer : IOptimizer
     {
-        private readonly float _learningRate;
-        private readonly float _beta1;
-        private readonly float _beta2;
-        private readonly float _epsilon;
-        private readonly float _weightDecay;
+        public float LearningRate { get; set; }
+        public float Beta1 { get; set; }
+        public float Beta2 { get; set; }
+        public float Epsilon { get; set; }
+        public float WeightDecay { get; set; }
+
+        public int StepCount => _stepCount;
 
         private int _stepCount;
 
-        // Tracks first (m) and second (v) moment state buffers for each TrainableParameter
-        private readonly Dictionary<TrainableParameter, (Tensor FirstMoment, Tensor SecondMoment)> _state = new();
+        // Keyed by Parameter Name (or ID) to maintain state across checkpoint reloads
+        private readonly Dictionary<string, (Tensor FirstMoment, Tensor SecondMoment)> _state = new();
 
         public AdamWOptimizer(
             float learningRate = 0.001f, 
@@ -25,11 +26,11 @@ namespace SimpleTransformer.Model
             float epsilon = 1e-8f, 
             float weightDecay = 0.01f)
         {
-            _learningRate = learningRate;
-            _beta1 = beta1;
-            _beta2 = beta2;
-            _epsilon = epsilon;
-            _weightDecay = weightDecay;
+            LearningRate = learningRate;
+            Beta1 = beta1;
+            Beta2 = beta2;
+            Epsilon = epsilon;
+            WeightDecay = weightDecay;
             _stepCount = 0;
         }
 
@@ -37,28 +38,28 @@ namespace SimpleTransformer.Model
         {
             _stepCount++;
 
-            // Compute step-wide bias correction factor scalars
-            float biasCorrection1 = 1.0f - MathF.Pow(_beta1, _stepCount);
-            float biasCorrection2 = 1.0f - MathF.Pow(_beta2, _stepCount);
+            // Compute standard Adam bias correction factors
+            float biasCorrection1 = 1.0f - MathF.Pow(Beta1, _stepCount);
+            float biasCorrection2 = 1.0f - MathF.Pow(Beta2, _stepCount);
             
-            // Effective learning rate alpha adjusted for bias correction
-            float alpha = _learningRate * (MathF.Sqrt(biasCorrection2) / biasCorrection1);
-            float scaledEpsilon = _epsilon * MathF.Sqrt(biasCorrection2);
+            // Effective step size alpha = lr * sqrt(1 - beta2^t) / (1 - beta1^t)
+            float alpha = LearningRate * (MathF.Sqrt(biasCorrection2) / biasCorrection1);
 
             foreach (var p in parameters)
             {
                 if (p.Gradient == null || p.Value == null)
                     continue;
 
-                // Ensure state tensors exist for this parameter
-                if (!_state.TryGetValue(p, out var moments))
+                // Use parameter name (or fallback to unique ID) so state survives object reinstantiation
+                string paramKey = p.Name ?? p.GetHashCode().ToString();
+
+                if (!_state.TryGetValue(paramKey, out var moments))
                 {
-                    // Match shape of the parameter tensor
                     moments = (
                         new Tensor(p.Value.Shape),
                         new Tensor(p.Value.Shape)
                     );
-                    _state[p] = moments;
+                    _state[paramKey] = moments;
                 }
 
                 UpdateParameterAdamW(
@@ -66,8 +67,7 @@ namespace SimpleTransformer.Model
                     p.Gradient, 
                     moments.FirstMoment, 
                     moments.SecondMoment, 
-                    alpha, 
-                    scaledEpsilon);
+                    alpha);
             }
         }
 
@@ -76,8 +76,7 @@ namespace SimpleTransformer.Model
             TensorBase gradients, 
             TensorBase m, 
             TensorBase v, 
-            float alpha, 
-            float scaledEpsilon)
+            float alpha)
         {
             Span<float> wSpan = weights.Data;
             ReadOnlySpan<float> gSpan = gradients.Data;
@@ -85,28 +84,34 @@ namespace SimpleTransformer.Model
             Span<float> vSpan = v.Data;
 
             int count = wSpan.Length;
+            float lrDecay = LearningRate * WeightDecay;
 
             for (int i = 0; i < count; i++)
             {
                 float g = gSpan[i];
                 float w = wSpan[i];
 
-                // 1. Decoupled Weight Decay
-                w -= _learningRate * _weightDecay * w;
+                // 1. Decoupled Weight Decay (w = w - lr * decay * w)
+                w -= lrDecay * w;
 
-                // 2. Update first moment (m = beta1 * m + (1 - beta1) * g)
-                float mVal = _beta1 * mSpan[i] + (1.0f - _beta1) * g;
+                // 2. Update first moment: m = beta1 * m + (1 - beta1) * g
+                float mVal = Beta1 * mSpan[i] + (1.0f - Beta1) * g;
                 mSpan[i] = mVal;
 
-                // 3. Update second moment (v = beta2 * v + (1 - beta2) * g^2)
-                float vVal = _beta2 * vSpan[i] + (1.0f - _beta2) * (g * g);
+                // 3. Update second moment: v = beta2 * v + (1 - beta2) * g^2
+                float vVal = Beta2 * vSpan[i] + (1.0f - Beta2) * (g * g);
                 vSpan[i] = vVal;
 
-                // 4. Update parameter value
-                w -= alpha * (mVal / (MathF.Sqrt(vVal) + scaledEpsilon));
+                // 4. Parameter update step
+                w -= alpha * (mVal / (MathF.Sqrt(vVal) + Epsilon));
 
                 wSpan[i] = w;
             }
+        }
+
+        public void SetStepCount(int stepCount)
+        {
+            _stepCount = stepCount;
         }
 
         public void ResetState()

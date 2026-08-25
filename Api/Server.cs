@@ -22,6 +22,22 @@ namespace SimpleTransformer.Api
                 });
                 // Add services to the container.
                 builder.Services.AddControllers();
+
+                builder.Services.AddCors(options =>
+                {
+                    options.AddDefaultPolicy(policy =>
+                    {
+                        policy.AllowAnyOrigin();
+                        policy.AllowAnyMethod();
+                        policy.AllowAnyHeader();
+                    });
+                    options.AddPolicy("Frontend", pol =>
+                    {
+                        pol.WithOrigins("http://localhost:5173");
+                        pol.AllowAnyMethod();
+                        pol.AllowAnyHeader();
+                    });
+                });
                 
                 builder.Services.AddEndpointsApiExplorer();
 
@@ -97,6 +113,8 @@ namespace SimpleTransformer.Api
                 builder.Services.AddScoped<InferService>();
 
                 var app = builder.Build();
+                
+                app.UseCors("Frontend");
 
                 if(app.Environment.IsDevelopment())
                 {

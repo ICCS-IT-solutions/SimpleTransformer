@@ -11,7 +11,15 @@ namespace SimpleTransformer.Model
     public class QLoraLinearLayer : ILinearLayer
     {
         //Likely not used in QLoRA or LoRA, but here due to the interface requirement.
-        public Tensor Weights { get; private set; }
+        public Tensor Weights
+        {
+            get
+            {
+                Tensor dequantized = new Tensor(_outputSize, _inputSize);
+                DequantizeBaseWeights(dequantized);
+                return dequantized;
+            }
+        }
         public string Name { get; }
         private readonly int _inputSize;
         public int InputSize => _inputSize;

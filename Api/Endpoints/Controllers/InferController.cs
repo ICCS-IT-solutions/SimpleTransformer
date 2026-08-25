@@ -28,5 +28,15 @@ namespace SimpleTransformer.Api.Endpoints.Controllers
             //Get the model and tokenizer from the injected instances in the constructor
             return await _service.Infer(req);
         }
+        //Alias of infer, uses the same service.
+        [HttpPost("api/v1/predict")]
+        public async Task<ApiResponse<InferenceResponse>> Predict([FromBody] InferenceRequest req)
+        {
+            //Validate: Input must not be empty or null, but the other two props do have auto properties assigned.
+            if(string.IsNullOrEmpty(req.InputText)) throw new ArgumentException("Input must not be empty or null.");
+
+            //Get the model and tokenizer from the injected instances in the constructor
+            return await _service.Infer(req);
+        }        
     }
 }
