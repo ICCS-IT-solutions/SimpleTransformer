@@ -216,6 +216,106 @@ namespace SimpleTransformer.Model.Extensions.Numerics
             }
         }
 
+        public static void ElementWiseMultiplyInto(
+            TensorBase a,
+            TensorBase b,
+            TensorBase result)
+        {
+            ValidateSameShape(a, b);
+            ValidateSameShape(a, result);
+
+            ReadOnlySpan<float> aSpan = a.ReadOnlySpan;
+            ReadOnlySpan<float> bSpan = b.ReadOnlySpan;
+            Span<float> resultSpan = result.Span;
+
+            int len = aSpan.Length;
+            int width = Vector<float>.Count;
+
+            ref float pA = ref MemoryMarshal.GetReference(aSpan);
+            ref float pB = ref MemoryMarshal.GetReference(bSpan);
+            ref float pResult = ref MemoryMarshal.GetReference(resultSpan);
+
+            int i = 0;
+
+            for (; i <= len - width; i += width)
+            {
+                Vector<float> va =
+                    Vector.LoadUnsafe(ref pA, (uint)i);
+
+                Vector<float> vb =
+                    Vector.LoadUnsafe(ref pB, (uint)i);
+
+                Vector<float> resultVector =
+                    va * vb;
+
+                Vector.StoreUnsafe(
+                    resultVector,
+                    ref pResult,
+                    (uint)i);
+            }
+
+            for (; i < len; i++)
+            {
+                Unsafe.Add(ref pResult, i) =
+                    Unsafe.Add(ref pA, i) *
+                    Unsafe.Add(ref pB, i);
+            }
+        }
+
+        public static void ElementWiseMultiplyInPlace(TensorBase a, TensorBase b)
+        {
+            // 1. Maintain shape validation
+            ValidateSameShape(a, b);
+
+            // 2. CRITICAL FIX: Use Span and ReadOnlySpan properties to safely support TensorViews
+            Span<float> aSpan = a.Span;
+            ReadOnlySpan<float> bSpan = b.ReadOnlySpan;
+
+            int len = aSpan.Length;
+            int width = Vector<float>.Count;
+
+            // 3. Pin the starting memory addresses to eliminate all .NET bounds-checking overhead
+            ref float pA = ref MemoryMarshal.GetReference(aSpan);
+            ref float pB = ref MemoryMarshal.GetReference(bSpan);
+
+            int i = 0;
+
+            // 4. Vectorized Main SIMD Loop (Pure memory-to-register streaming)
+            for (; i <= len - width; i += width)
+            {
+                // Direct unhindered hardware vector load from the pointer addresses
+                Vector<float> va = Vector.LoadUnsafe(ref pA, (uint)i);
+                Vector<float> vb = Vector.LoadUnsafe(ref pB, (uint)i);
+
+                // Native hardware add instruction
+                Vector<float> result = va * vb;
+
+                // Stream the result vector directly back into RAM
+                Vector.StoreUnsafe(result, ref pA, (uint)i);
+            }
+
+            // 5. Unsafe Scalar Cleanup Path for trailing elements
+            for (; i < len; i++)
+            {
+                Unsafe.Add(ref pA, i) *= Unsafe.Add(ref pB, i);
+            }
+        }
+
+        public static Tensor ElementWiseMultiply(
+            TensorBase a,
+            TensorBase b)
+        {
+            ValidateSameShape(a, b);
+
+            var result = new Tensor(a.Shape);
+
+            ElementWiseMultiplyInto(
+                a,
+                b,
+                result);
+
+            return result;
+        }
 
         public static Tensor ElementWiseAdd(TensorBase a, TensorBase b)
         {

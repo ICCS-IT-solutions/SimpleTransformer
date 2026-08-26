@@ -42,7 +42,7 @@ namespace SimpleTransformer.Model.Extensions.Numerics
                 SoftmaxInPlace(GetRow(matrix, row).Span);
             }
         }
-        private static void SoftmaxInPlace(Span<float> values)
+        public static void SoftmaxInPlace(Span<float> values)
         {
             int len = values.Length;
             if (len == 0)

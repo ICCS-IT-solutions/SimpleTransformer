@@ -106,6 +106,8 @@ namespace SimpleTransformer.Api.Endpoints.Services
 
             // Zero-allocation chunking using .NET 6+ Chunk()
             var subBatches = miniBatches.Chunk(chunkSize);
+            
+            int totalOuterBatches = subBatches.Count();
 
             var totalEpochs = startEpoch + (config?.Epochs ?? 10); // Default to 10 epochs if not specified
 
@@ -115,9 +117,16 @@ namespace SimpleTransformer.Api.Endpoints.Services
                 job.Status = TrainingJobStatus.Started;
                 job.CurrentEpoch = startEpoch;
                 job.TotalEpochs = totalEpochs;
+
                 job.CurrentBatch = 0;
-                job.TotalBatches = numBatches;
-                job.Message = $"Training prepared: {samples.Count} samples in {numBatches} batches.";
+                job.TotalBatches = totalOuterBatches;
+
+                job.NumSubBatches = chunkSize;
+                job.CurrentSubBatch = 0;
+
+                job.Message =
+                    $"Training prepared: {samples.Count} samples in " +
+                    $"{numBatches} mini-batches ({totalOuterBatches} outer batches).";
             });
 
             // 1. Begin training. This notifies other endpoint services that the model is busy training and should not be used.
@@ -144,6 +153,11 @@ namespace SimpleTransformer.Api.Endpoints.Services
                     {
                         // Shuffle the outer sub-batch groups ONCE per epoch
                         var shuffledSubBatches = Shuffle(subBatches.ToList(), rng);
+                        UpdateJob (job.JobId, job => 
+                        {
+                            job.Message = $"Shuffling batches (epoch {epoch + 1}/{totalEpochs}).";
+                            job.NumSubBatches = chunkSize;
+                        });
 
                         for (int batch = 0; batch < shuffledSubBatches.Count; batch++)
                         {
@@ -171,6 +185,7 @@ namespace SimpleTransformer.Api.Endpoints.Services
                                 // Correct parenthesis grouping for modulus
                                 if ((subBatch + 1) % 4 == 0 || subBatch == 0)
                                 {
+                                    UpdateJob(job.JobId, job => job.CurrentSubBatch = subBatch + 1);
                                     Log.Information($"Epoch {epoch + 1}, Batch {batch + 1}, Sub-Batch {subBatch + 1} training loss: {epochLoss:F6}");
                                 }
                             }
@@ -183,10 +198,15 @@ namespace SimpleTransformer.Api.Endpoints.Services
                         }
                     }
                     else
-                    {
+                    {   // Number of sub batches here is 1.
                         // Shuffle standard mini-batches ONCE per epoch
                         var shuffledMiniBatches = Shuffle(miniBatches.ToList(), rng);
-
+                        UpdateJob(job.JobId, job =>
+                        {
+                            job.Message = $"Shuffling batches (epoch {epoch + 1}/{totalEpochs}).";
+                            job.TotalBatches = shuffledMiniBatches.Count;
+                            job.NumSubBatches = 1;
+                        });
                         for (int batch = 0; batch < numBatches; batch++)
                         {
                             var item = shuffledMiniBatches[batch];
@@ -205,7 +225,6 @@ namespace SimpleTransformer.Api.Endpoints.Services
                     epochLoss /= miniBatches.Count;
 
                     Log.Information($"Epoch {epoch + 1}: Loss={epochLoss:F6}");
-
                     UpdateJob(job.JobId, job =>
                     {
                         job.CurrentEpoch = epoch + 1;

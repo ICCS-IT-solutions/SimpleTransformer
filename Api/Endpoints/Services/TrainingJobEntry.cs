@@ -11,6 +11,8 @@ namespace SimpleTransformer.Api.Endpoints.Services
         public int TotalEpochs { get; set; }
         public int CurrentBatch { get; set; }
         public int TotalBatches { get; set; }
+        public int NumSubBatches { get; set; }
+        public int CurrentSubBatch { get; set; }
         public float CurrentLoss { get; set; }
         public string Message { get; set; } = "";
         public string? Checkpoint { get; set; }

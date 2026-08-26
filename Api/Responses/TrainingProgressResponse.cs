@@ -9,6 +9,8 @@ namespace SimpleTransformer.Api.Responses
         public float CurrentLoss { get; set; }
         public int CurrentBatch { get; set; }
         public int TotalBatches { get; set; }
+        public int NumSubBatches { get; set; }
+        public int CurrentSubBatch { get; set; }
         public DateTime? StartedAt { get; set; }
         public DateTime? CompletedAt { get; set; }
         public DateTime LastUpdatedAt { get; set; }

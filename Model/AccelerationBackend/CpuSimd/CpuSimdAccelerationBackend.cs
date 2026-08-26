@@ -1,50 +1,65 @@
+/*
+Todos for this backend:
+Move all relevant math classes into this hieararchy.
+CpuSimd (root) -> Math, Utilities, Extensions, etc.
+Clean up old code.
+*/
+using SimpleTransformer.Model.Extensions;
+using SimpleTransformer.Model.Extensions.Numerics;
+
 namespace SimpleTransformer.Model.AccelerationBackend.CpuSimd
 {
     //This will eventually replace all the static extensions with a single class for acceleration
-    public class CpuSimdAccelerationBackend : IAccelerationBackend
+    public sealed class CpuSimdAccelerationBackend : IAccelerationBackend
     {
-        public string Name => throw new NotImplementedException();
+        public string Name => "CPU-SIMD";
 
-        public bool IsGpuAccelerated => throw new NotImplementedException();
+        public bool IsGpuAccelerated => false;
 
         public void Dispose()
         {
-            throw new NotImplementedException();
+            //Nothing to do - not using a GPU here.
         }
 
         public void ElementWiseAddInPlace(TensorBase target, TensorBase source)
         {
-            throw new NotImplementedException();
+            TensorMathSimd.ElementWiseAddInPlace(target, source);
         }
 
         public void ElementWiseMultiplyInPlace(TensorBase target, TensorBase source)
         {
-            throw new NotImplementedException();
+            TensorMathSimd.ElementWiseMultiplyInPlace(target, source);
         }
 
         public void LayerNormInPlace(TensorBase tensor, TensorBase gamma, TensorBase beta, float epsilon = 1E-05F)
         {
-            throw new NotImplementedException();
+            TensorMathSimd.LayerNormInPlace(tensor, gamma, beta, epsilon);
         }
 
         public void MatMul(TensorBase tensorA, TensorBase tensorB, TensorBase tensorResult, bool transposeA = false, bool transposeB = false)
         {
-            throw new NotImplementedException();
+            TensorMathSimd.MatMul(tensorA, tensorB, tensorResult, transposeA, transposeB);
         }
 
         public void ScaleInPlace(TensorBase tensor, float scalar)
         {
-            throw new NotImplementedException();
+            //Reuse the existing TensorMathSimd extension class
+            TensorMathSimd.ScaleInPlace(tensor, scalar);
         }
 
-        public void SoftmaxInPlace(TensorBase tensor, int axis = -1)
+        public void SoftmaxInPlace(TensorBase tensor)
         {
-            throw new NotImplementedException();
+            TensorUtilitiesSimd.SoftmaxInPlace(tensor.Data);
+        }
+
+        public void GeluInPlace(TensorBase tensor)
+        {
+            TensorMathSimd.GeluInPlace(tensor);
         }
 
         public void Synchronize()
         {
-            throw new NotImplementedException();
+            //Nothing to do - not using a GPU here.
         }
     }
 }

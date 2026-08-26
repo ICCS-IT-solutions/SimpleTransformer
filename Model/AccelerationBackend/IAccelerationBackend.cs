@@ -12,11 +12,13 @@ public interface IAccelerationBackend : IDisposable
     void ElementWiseMultiplyInPlace(TensorBase target, TensorBase source);
     
     // Non-linearities & Normalization
-    void SoftmaxInPlace(TensorBase tensor, int axis = -1);
+    void SoftmaxInPlace(TensorBase tensor);
     void LayerNormInPlace(TensorBase tensor, TensorBase gamma, TensorBase beta, float epsilon = 1e-5f);
 
     // Matrix Multiplication
     void MatMul(TensorBase tensorA, TensorBase tensorB, TensorBase tensorResult, bool transposeA = false, bool transposeB = false);
+
+    void GeluInPlace(TensorBase tensor);
 
     // Memory / Execution Synchronization (Essential for GPU Backends)
     void Synchronize();

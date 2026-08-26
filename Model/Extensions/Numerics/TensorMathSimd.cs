@@ -64,6 +64,431 @@ namespace SimpleTransformer.Model.Extensions.Numerics
             return result;
         }
 
+        public static void LayerNormInPlace(
+            TensorBase tensor,
+            TensorBase gamma,
+            TensorBase beta,
+            float epsilon = 1e-5f)
+        {
+            ValidateLayerNormArguments(
+                tensor,
+                gamma,
+                beta,
+                tensor);
+
+            int normalizedSize = tensor.Cols;
+
+            if (gamma.Length != normalizedSize ||
+                beta.Length != normalizedSize)
+            {
+                throw new ArgumentException(
+                    "Gamma and beta dimensions must match the normalized dimension.");
+            }
+
+            ReadOnlySpan<float> gammaSpan = gamma.ReadOnlySpan;
+            ReadOnlySpan<float> betaSpan = beta.ReadOnlySpan;
+
+            int rows = tensor.Length / normalizedSize;
+
+            for (int row = 0; row < rows; row++)
+            {
+                Span<float> values = tensor
+                    .GetRowSpan(row);                   
+
+                LayerNormRowInPlace(
+                    values,
+                    gammaSpan,
+                    betaSpan,
+                    epsilon);
+            }
+        }
+        public static void LayerNormInto(
+            TensorBase input,
+            TensorBase gamma,
+            TensorBase beta,
+            TensorBase result,
+            float epsilon = 1e-5f)
+        {
+            ValidateLayerNormArguments(
+                input,
+                gamma,
+                beta,
+                result);
+
+            int normalizedSize = input.Cols;
+            int rows = input.Length / normalizedSize;
+
+            ReadOnlySpan<float> gammaSpan = gamma.ReadOnlySpan;
+            ReadOnlySpan<float> betaSpan = beta.ReadOnlySpan;
+            ReadOnlySpan<float> inputSpan = input.ReadOnlySpan;
+            Span<float> resultSpan = result.Span;
+
+            for (int row = 0; row < rows; row++)
+            {
+                ReadOnlySpan<float> inputRow =
+                    inputSpan.Slice(
+                        row * normalizedSize,
+                        normalizedSize);
+
+                Span<float> resultRow =
+                    resultSpan.Slice(
+                        row * normalizedSize,
+                        normalizedSize);
+
+                LayerNormRowInto(
+                    inputRow,
+                    gammaSpan,
+                    betaSpan,
+                    resultRow,
+                    epsilon);
+            }
+        }
+
+        public static Tensor LayerNorm(
+            TensorBase input,
+            TensorBase gamma,
+            TensorBase beta,
+            float epsilon = 1e-5f)
+        {
+            var result = new Tensor(input.Shape);
+
+            LayerNormInto(
+                input,
+                gamma,
+                beta,
+                result,
+                epsilon);
+
+            return result;
+        }       
+        private static void LayerNormRowInPlace(
+            Span<float> values,
+            ReadOnlySpan<float> gamma,
+            ReadOnlySpan<float> beta,
+            float epsilon)
+        {
+            int len = values.Length;
+
+            if (len == 0)
+                return;
+
+            int width = Vector<float>.Count;
+
+            ref float pValues =
+                ref MemoryMarshal.GetReference(values);
+
+            ref float pGamma =
+                ref MemoryMarshal.GetReference(gamma);
+
+            ref float pBeta =
+                ref MemoryMarshal.GetReference(beta);
+
+            // ------------------------------------------------------------
+            // Phase 1: Calculate mean
+            // ------------------------------------------------------------
+
+            Vector<float> sumVector = Vector<float>.Zero;
+
+            int i = 0;
+
+            for (; i <= len - width; i += width)
+            {
+                Vector<float> v =
+                    Vector.LoadUnsafe(ref pValues, (uint)i);
+
+                sumVector += v;
+            }
+
+            float sum = Vector.Dot(
+                sumVector,
+                Vector<float>.One);
+
+            for (; i < len; i++)
+            {
+                sum += Unsafe.Add(ref pValues, i);
+            }
+
+            float mean = sum / len;
+
+            // ------------------------------------------------------------
+            // Phase 2: Calculate variance
+            // ------------------------------------------------------------
+
+            Vector<float> vMean =
+                new(mean);
+
+            Vector<float> varianceVector =
+                Vector<float>.Zero;
+
+            i = 0;
+
+            for (; i <= len - width; i += width)
+            {
+                Vector<float> v =
+                    Vector.LoadUnsafe(ref pValues, (uint)i);
+
+                Vector<float> diff =
+                    v - vMean;
+
+                varianceVector += diff * diff;
+            }
+
+            float variance = Vector.Dot(
+                varianceVector,
+                Vector<float>.One);
+
+            for (; i < len; i++)
+            {
+                float diff =
+                    Unsafe.Add(ref pValues, i) - mean;
+
+                variance += diff * diff;
+            }
+
+            variance /= len;
+
+            float invStd =
+                1.0f / MathF.Sqrt(variance + epsilon);
+
+            Vector<float> vInvStd =
+                new(invStd);
+
+            // ------------------------------------------------------------
+            // Phase 3: Normalize + gamma + beta
+            // ------------------------------------------------------------
+
+            i = 0;
+
+            for (; i <= len - width; i += width)
+            {
+                Vector<float> v =
+                    Vector.LoadUnsafe(ref pValues, (uint)i);
+
+                Vector<float> g =
+                    Vector.LoadUnsafe(ref pGamma, (uint)i);
+
+                Vector<float> b =
+                    Vector.LoadUnsafe(ref pBeta, (uint)i);
+
+                Vector<float> normalized =
+                    (v - vMean) * vInvStd;
+
+                Vector<float> result =
+                    normalized * g + b;
+
+                Vector.StoreUnsafe(
+                    result,
+                    ref pValues,
+                    (uint)i);
+            }
+
+            for (; i < len; i++)
+            {
+                float value =
+                    Unsafe.Add(ref pValues, i);
+
+                float normalized =
+                    (value - mean) * invStd;
+
+                Unsafe.Add(ref pValues, i) =
+                    normalized *
+                    Unsafe.Add(ref pGamma, i) +
+                    Unsafe.Add(ref pBeta, i);
+            }
+        }
+
+        private static void LayerNormRowInto(
+            ReadOnlySpan<float> input,
+            ReadOnlySpan<float> gamma,
+            ReadOnlySpan<float> beta,
+            Span<float> result,
+            float epsilon)
+        {
+            int len = input.Length;
+
+            if (len == 0)
+                return;
+
+            if (gamma.Length != len ||
+                beta.Length != len ||
+                result.Length != len)
+            {
+                throw new ArgumentException(
+                    "LayerNorm row dimensions must match.");
+            }
+
+            int width = Vector<float>.Count;
+
+            ref float pInput =
+                ref MemoryMarshal.GetReference(input);
+
+            ref float pGamma =
+                ref MemoryMarshal.GetReference(gamma);
+
+            ref float pBeta =
+                ref MemoryMarshal.GetReference(beta);
+
+            ref float pResult =
+                ref MemoryMarshal.GetReference(result);
+
+            // ------------------------------------------------------------
+            // Phase 1: Calculate mean
+            // ------------------------------------------------------------
+
+            Vector<float> sumVector = Vector<float>.Zero;
+
+            int i = 0;
+
+            for (; i <= len - width; i += width)
+            {
+                Vector<float> values =
+                    Vector.LoadUnsafe(ref pInput, (uint)i);
+
+                sumVector += values;
+            }
+
+            float sum = Vector.Dot(
+                sumVector,
+                Vector<float>.One);
+
+            for (; i < len; i++)
+            {
+                sum += Unsafe.Add(ref pInput, i);
+            }
+
+            float mean = sum / len;
+
+            // ------------------------------------------------------------
+            // Phase 2: Calculate variance
+            // ------------------------------------------------------------
+
+            Vector<float> vMean = new(mean);
+
+            Vector<float> varianceVector =
+                Vector<float>.Zero;
+
+            i = 0;
+
+            for (; i <= len - width; i += width)
+            {
+                Vector<float> values =
+                    Vector.LoadUnsafe(ref pInput, (uint)i);
+
+                Vector<float> difference =
+                    values - vMean;
+
+                varianceVector +=
+                    difference * difference;
+            }
+
+            float variance = Vector.Dot(
+                varianceVector,
+                Vector<float>.One);
+
+            for (; i < len; i++)
+            {
+                float difference =
+                    Unsafe.Add(ref pInput, i) - mean;
+
+                variance +=
+                    difference * difference;
+            }
+
+            variance /= len;
+
+            float inverseStdDev =
+                1.0f / MathF.Sqrt(variance + epsilon);
+
+            Vector<float> vInverseStdDev =
+                new(inverseStdDev);
+
+            // ------------------------------------------------------------
+            // Phase 3: Normalize + gamma + beta
+            // ------------------------------------------------------------
+
+            i = 0;
+
+            for (; i <= len - width; i += width)
+            {
+                Vector<float> values =
+                    Vector.LoadUnsafe(ref pInput, (uint)i);
+
+                Vector<float> vGamma =
+                    Vector.LoadUnsafe(ref pGamma, (uint)i);
+
+                Vector<float> vBeta =
+                    Vector.LoadUnsafe(ref pBeta, (uint)i);
+
+                Vector<float> normalized =
+                    (values - vMean) * vInverseStdDev;
+
+                Vector<float> output =
+                    normalized * vGamma + vBeta;
+
+                Vector.StoreUnsafe(
+                    output,
+                    ref pResult,
+                    (uint)i);
+            }
+
+            // ------------------------------------------------------------
+            // Scalar remainder
+            // ------------------------------------------------------------
+
+            for (; i < len; i++)
+            {
+                float value =
+                    Unsafe.Add(ref pInput, i);
+
+                float normalized =
+                    (value - mean) * inverseStdDev;
+
+                Unsafe.Add(ref pResult, i) =
+                    normalized *
+                    Unsafe.Add(ref pGamma, i) +
+                    Unsafe.Add(ref pBeta, i);
+            }
+        }        
+        private static void ValidateLayerNormArguments(
+            TensorBase input,
+            TensorBase gamma,
+            TensorBase beta,
+            TensorBase result)
+        {
+            if (input.Rank < 1)
+                throw new ArgumentException(
+                    "Input tensor must have at least one dimension.",
+                    nameof(input));
+
+            if (result.Rank != input.Rank)
+                throw new ArgumentException(
+                    "Result tensor must have the same rank as the input.",
+                    nameof(result));
+
+            if (!input.Shape.SequenceEqual(result.Shape))
+                throw new ArgumentException(
+                    "Result tensor must have the same shape as the input.",
+                    nameof(result));
+
+            int normalizedSize = input.Shape[^1];
+
+            if (gamma.Rank != 1 ||
+                gamma.Length != normalizedSize)
+            {
+                throw new ArgumentException(
+                    "Gamma must be a vector matching the last input dimension.",
+                    nameof(gamma));
+            }
+
+            if (beta.Rank != 1 ||
+                beta.Length != normalizedSize)
+            {
+                throw new ArgumentException(
+                    "Beta must be a vector matching the last input dimension.",
+                    nameof(beta));
+            }
+        }
+
         public static void GeluInto(TensorBase src, TensorBase dst)
         {
             ReadOnlySpan<float> srcSpan = src.AsSpan(); // Fast flat span accessor
