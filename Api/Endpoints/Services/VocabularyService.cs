@@ -13,14 +13,16 @@ namespace SimpleTransformer.Api.Endpoints.Services
     public class VocabularyService
     {
         private readonly ITokenizer _tokenizer;
+        private readonly Vocabulary _vocabulary;
         private readonly IVocabularyCompiler _vocabularyCompiler;
         private readonly TransformerModel _model;
 
-        public VocabularyService(ITokenizer tokenizer, IVocabularyCompiler vocabularyCompiler, TransformerModel model)
+        public VocabularyService(ITokenizer tokenizer, IVocabularyCompiler vocabularyCompiler, TransformerModel model, Vocabulary vocabulary)
         {
             _tokenizer = tokenizer;
             _vocabularyCompiler = vocabularyCompiler;
             _model = model;
+            _vocabulary = vocabulary;
         }
 
         public async Task<ApiResponse<VocabularyLoaderResponse>> LoadFromFile(LoadVocabularyRequest req)
@@ -118,7 +120,37 @@ namespace SimpleTransformer.Api.Endpoints.Services
                     Data = null
                 };
             }
-
         }
+
+        //The idea here is to query the model for the current vocabulary properties and return them
+        public async Task<ApiResponse<VocabularyPropertiesResponse>> GetCurrentVocabularyProperties()
+        {
+            return new ApiResponse<VocabularyPropertiesResponse>
+            {
+                Status = ResponseStatus.Success,
+                StatusCode = 200,
+                Data = new VocabularyPropertiesResponse
+                {
+                    VocabSize = _vocabulary.TokenToId.Count,
+                    //This will get me the id's of these tokens, which should be ok.
+                    UnknownToken = _vocabulary.TokenToId[SpecialTokens.Unknown].ToString(),
+                    PaddingToken = _vocabulary.TokenToId[SpecialTokens.Pad].ToString(),
+                    MaskToken = _vocabulary.TokenToId[SpecialTokens.Mask].ToString(),
+                    BosToken = _vocabulary.TokenToId[SpecialTokens.BeginningOfSequence].ToString(),
+                    EosToken = _vocabulary.TokenToId[SpecialTokens.EndOfSequence].ToString(),
+                }
+            };
+        }
+    }
+
+    public class VocabularyPropertiesResponse
+    {
+        public int VocabSize { get; set; }
+        //Question now is: how to get these to populate from the model config? Do I store them in it as well?
+        public string UnknownToken { get; set; }
+        public string PaddingToken { get; set; }
+        public string MaskToken { get; set; }
+        public string BosToken { get; set; }
+        public string EosToken { get; set; }
     }
 }

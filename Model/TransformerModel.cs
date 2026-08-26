@@ -15,7 +15,11 @@ namespace SimpleTransformer.Model
         private EmbeddingLayer _embedding = null!;
         private ILinearLayer _outputProjection = null!;
         private PositionalEncodingLayer _position = null!;
-        private TensorWorkspace _workspace = null!;       
+        private TensorWorkspace _workspace = null!; 
+        //Set this to true whenever training is underway. It can be defaulted to false if necessary.
+        private bool _isTraining;
+        public bool IsTraining => _isTraining;
+        public bool CanInfer => !_isTraining;
         public IEnumerable<TrainableParameter> Parameters
         {
             get
@@ -97,6 +101,9 @@ namespace SimpleTransformer.Model
             Log.Information("Transformer model ready to be loaded.");
         }
 
+        public void BeginTraining() => _isTraining = true;
+        public void EndTraining() => _isTraining = false;
+        
         public TransformerModel CreateFromConfig(TransformerConfig? config, TrainingConfig? trainingConfig)
         {
             return new TransformerModel(config, trainingConfig);
@@ -115,8 +122,6 @@ namespace SimpleTransformer.Model
         {
             Log.Information("Starting forward pass through the transformer model...");
             var forwardWatch = Stopwatch.StartNew();
-
-            // REMOVED: _embedding.ZeroGradients(); 
 
             DiagonisticUtilities.AssertNoNaN(input, "Input contains NaN.");
             TensorBase x = _embedding.Forward(input, _workspace);

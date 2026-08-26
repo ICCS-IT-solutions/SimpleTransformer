@@ -72,6 +72,25 @@ namespace SimpleTransformer.Api.Endpoints.Services
                 Log.Information("Resuming training from Epoch {Epoch} (Last Loss: {Loss:F6})", startEpoch + 1, savedLoss);
             }
 
+            TrainingConfig config;
+
+            try
+            {
+                config = req.Config != null
+                    ? JsonSerializer.Deserialize<TrainingConfig>(req.Config)
+                        ?? TrainingConfig.DefaultAdamWConfig
+                    : TrainingConfig.DefaultAdamWConfig;
+            }
+            catch (JsonException ex)
+            {
+                return new ApiResponse<TrainingResponse>
+                {
+                    Message = $"Invalid training config: {ex.Message}",
+                    Status = ResponseStatus.Failure,
+                    StatusCode = 400
+                };
+            }
+
             var samples = CreateTrainingSamples(req.InputText);
             var miniBatches = CreateMiniBatches(samples);
             var numBatches = miniBatches.Count;
@@ -88,7 +107,7 @@ namespace SimpleTransformer.Api.Endpoints.Services
             // Zero-allocation chunking using .NET 6+ Chunk()
             var subBatches = miniBatches.Chunk(chunkSize);
 
-            var totalEpochs = startEpoch + (req.Config?.Epochs ?? 10); // Default to 10 epochs if not specified
+            var totalEpochs = startEpoch + (config?.Epochs ?? 10); // Default to 10 epochs if not specified
 
             //Update the job status
             UpdateJob(job.JobId, job =>
@@ -101,114 +120,127 @@ namespace SimpleTransformer.Api.Endpoints.Services
                 job.Message = $"Training prepared: {samples.Count} samples in {numBatches} batches.";
             });
 
-            // 2. Training loop
-            for (int epoch = startEpoch; epoch < totalEpochs; epoch++)
+            // 1. Begin training. This notifies other endpoint services that the model is busy training and should not be used.
+            _model.BeginTraining();
+            try
             {
-                float epochLoss = 0f;
-                // Single Random instance reused across the engine
-                var rng = new Random();
-
-                UpdateJob(job.JobId, job =>
+                // 2. Training loop
+                for (int epoch = startEpoch; epoch < totalEpochs; epoch++)
                 {
-                    job.Status = TrainingJobStatus.Running;
-                    job.CurrentEpoch = epoch + 1;
-                    job.CurrentBatch = 0;
-                    job.CurrentLoss = 0;
-                    job.Message = $"Training epoch {epoch + 1} of {totalEpochs}.";
-                });
+                    float epochLoss = 0f;
+                    // Single Random instance reused across the engine
+                    var rng = new Random();
 
-                if (numBatches > 8)
-                {
-                    // Shuffle the outer sub-batch groups ONCE per epoch
-                    var shuffledSubBatches = Shuffle(subBatches.ToList(), rng);
-
-                    for (int batch = 0; batch < shuffledSubBatches.Count; batch++)
+                    UpdateJob(job.JobId, job =>
                     {
-                        if ((batch + 1) % 5 == 0 ||
-                            batch == 0 ||
-                            batch == numBatches - 1)
+                        job.Status = TrainingJobStatus.Running;
+                        job.CurrentEpoch = epoch + 1;
+                        job.CurrentBatch = 0;
+                        job.CurrentLoss = 0;
+                        job.Message = $"Training epoch {epoch + 1} of {totalEpochs}.";
+                    });
+
+                    if (numBatches > 8)
+                    {
+                        // Shuffle the outer sub-batch groups ONCE per epoch
+                        var shuffledSubBatches = Shuffle(subBatches.ToList(), rng);
+
+                        for (int batch = 0; batch < shuffledSubBatches.Count; batch++)
                         {
-                            UpdateJob(job.JobId, job =>
+                            if ((batch + 1) % 5 == 0 ||
+                                batch == 0 ||
+                                batch == numBatches - 1)
                             {
-                                job.CurrentBatch = batch + 1;
-                                job.CurrentLoss = epochLoss;
+                                UpdateJob(job.JobId, job =>
+                                {
+                                    job.CurrentBatch = batch + 1;
+                                    job.CurrentLoss = epochLoss;
 
-                                job.Message =
-                                    $"Epoch {epoch + 1}/{totalEpochs}, " +
-                                    $"batch {batch + 1}/{numBatches}.";
-                            });
+                                    job.Message =
+                                        $"Epoch {epoch + 1}/{totalEpochs}, " +
+                                        $"batch {batch + 1}/{numBatches}.";
+                                });
+                            }
+                            var currentSubBatch = shuffledSubBatches[batch];
+
+                            for (int subBatch = 0; subBatch < currentSubBatch.Count(); subBatch++)
+                            {
+                                var item = currentSubBatch[subBatch];
+                                epochLoss += _model.TrainStep(item.Inputs, item.Targets);
+
+                                // Correct parenthesis grouping for modulus
+                                if ((subBatch + 1) % 4 == 0 || subBatch == 0)
+                                {
+                                    Log.Information($"Epoch {epoch + 1}, Batch {batch + 1}, Sub-Batch {subBatch + 1} training loss: {epochLoss:F6}");
+                                }
+                            }
+                            //It may be helpful to save temporary checkpoints here, and simply overwrite them. Possible name could be checkpoint-epoch-{epoch}-temp.bin
+                            //This can help prevent loss of progress should a training run fail or be stopped.
+                            string checkpointFileName = Path.Combine("checkpoints", $"checkpoint-epoch-{epoch}-temp.bin");
+                            await using var stream = File.Create(checkpointFileName);
+                            _model.SaveCheckpoint(stream, epoch, epochLoss);
+                            UpdateJob(job.JobId, job => job.Checkpoint = checkpointFileName);
                         }
-                        var currentSubBatch = shuffledSubBatches[batch];
+                    }
+                    else
+                    {
+                        // Shuffle standard mini-batches ONCE per epoch
+                        var shuffledMiniBatches = Shuffle(miniBatches.ToList(), rng);
 
-                        for (int subBatch = 0; subBatch < currentSubBatch.Count(); subBatch++)
+                        for (int batch = 0; batch < numBatches; batch++)
                         {
-                            var item = currentSubBatch[subBatch];
+                            var item = shuffledMiniBatches[batch];
                             epochLoss += _model.TrainStep(item.Inputs, item.Targets);
 
                             // Correct parenthesis grouping for modulus
-                            if ((subBatch + 1) % 4 == 0 || subBatch == 0)
+                            if ((batch + 1) % 10 == 0 || batch == 0)
                             {
-                                Log.Information($"Epoch {epoch + 1}, Batch {batch + 1}, Sub-Batch {subBatch + 1} training loss: {epochLoss:F6}");
+                                Console.ForegroundColor = ConsoleColor.Green;
+                                Log.Information($"Epoch {epoch + 1}, Batch {batch + 1} training loss: {epochLoss:F6}");
+                                Console.ResetColor();
                             }
                         }
-                        //It may be helpful to save temporary checkpoints here, and simply overwrite them. Possible name could be checkpoint-epoch-{epoch}-temp.bin
-                        //This can help prevent loss of progress should a training run fail or be stopped.
-                        string checkpointFileName = Path.Combine("checkpoints", $"checkpoint-epoch-{epoch}-temp.bin");
-                        await using var stream = File.Create(checkpointFileName);
-                        _model.SaveCheckpoint(stream, epoch, epochLoss);
-                        UpdateJob(job.JobId, job => job.Checkpoint = checkpointFileName);
                     }
-                }
-                else
-                {
-                    // Shuffle standard mini-batches ONCE per epoch
-                    var shuffledMiniBatches = Shuffle(miniBatches.ToList(), rng);
 
-                    for (int batch = 0; batch < numBatches; batch++)
-                    {
-                        var item = shuffledMiniBatches[batch];
-                        epochLoss += _model.TrainStep(item.Inputs, item.Targets);
+                    epochLoss /= miniBatches.Count;
 
-                        // Correct parenthesis grouping for modulus
-                        if ((batch + 1) % 10 == 0 || batch == 0)
-                        {
-                            Console.ForegroundColor = ConsoleColor.Green;
-                            Log.Information($"Epoch {epoch + 1}, Batch {batch + 1} training loss: {epochLoss:F6}");
-                            Console.ResetColor();
-                        }
-                    }
-                }
+                    Log.Information($"Epoch {epoch + 1}: Loss={epochLoss:F6}");
 
-                epochLoss /= miniBatches.Count;
-
-                Log.Information($"Epoch {epoch + 1}: Loss={epochLoss:F6}");
-
-                UpdateJob(job.JobId, job =>
-                {
-                    job.CurrentEpoch = epoch + 1;
-                    job.CurrentBatch = numBatches;
-                    job.CurrentLoss = epochLoss;
-                    job.Message =
-                        $"Epoch {epoch + 1} of {totalEpochs} completed.";
-                });
-
-                // Save checkpoint periodically via TransformerModel. Every 5 epochs or on the last epoch, save a checkpoint
-                if ((epoch + 1) % 5 == 0 || epoch == req.Config.Epochs - 1)
-                {
-                    string checkpointFileName = $"checkpoint-{epoch + 1}-loss-{epochLoss:F6}.bin";
-                    
-                    await using var stream = File.Create(checkpointFileName);
-                    _model.SaveCheckpoint(stream, epoch, epochLoss);
-                    
                     UpdateJob(job.JobId, job =>
                     {
-                        job.Checkpoint = checkpointFileName;
+                        job.CurrentEpoch = epoch + 1;
+                        job.CurrentBatch = numBatches;
                         job.CurrentLoss = epochLoss;
                         job.Message =
-                            $"Epoch {epoch + 1} completed. Checkpoint saved.";
+                            $"Epoch {epoch + 1} of {totalEpochs} completed.";
                     });
-                    Log.Information("Saved checkpoint to {FileName}", checkpointFileName);
+
+                    // Save checkpoint periodically via TransformerModel. Every 5 epochs or on the last epoch, save a checkpoint
+                    if ((epoch + 1) % 5 == 0 || epoch == config!.Epochs - 1)
+                    {
+                        string checkpointFileName = $"checkpoint-{epoch + 1}-loss-{epochLoss:F6}.bin";
+                        
+                        await using var stream = File.Create(checkpointFileName);
+                        _model.SaveCheckpoint(stream, epoch, epochLoss);
+                        
+                        UpdateJob(job.JobId, job =>
+                        {
+                            job.Checkpoint = checkpointFileName;
+                            job.CurrentLoss = epochLoss;
+                            job.Message =
+                                $"Epoch {epoch + 1} completed. Checkpoint saved.";
+                        });
+                        Log.Information("Saved checkpoint to {FileName}", checkpointFileName);
+                    }
                 }
+
+                //End training normally
+                _model.EndTraining();
+            }
+            finally
+            {
+                //If something goes wrong, end training.
+                _model.EndTraining();
             }
 
             //Update the job status
@@ -230,18 +262,9 @@ namespace SimpleTransformer.Api.Endpoints.Services
 
         public async Task<ApiResponse<TrainingResponse>> TrainModelFromTextFile(TrainingFileRequest req)
         {
-            if (string.IsNullOrWhiteSpace(req.TextFile) || !File.Exists(req.TextFile))
-            {
-                return new ApiResponse<TrainingResponse>
-                {
-                    Message = "Text file path is invalid or file does not exist.",
-                    Status = ResponseStatus.Failure,
-                    StatusCode = 400
-                };
-            }
+            using var reader = new StreamReader(req.TextFile.OpenReadStream());
 
-            // Read the file contents from disk
-            string fileText = await File.ReadAllTextAsync(req.TextFile);
+            string fileText = await reader.ReadToEndAsync();
 
             // Map to TrainingRequest
             var request = new TrainingRequest

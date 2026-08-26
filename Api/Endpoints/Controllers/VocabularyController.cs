@@ -27,5 +27,11 @@ namespace SimpleTransformer.Api.Endpoints.Controllers
         {
             return await _vocabularyService.Compile(req); 
         }
+
+        [HttpGet("api/v1/vocabulary/properties")]
+        public async Task<ApiResponse<VocabularyPropertiesResponse>> GetCurrentVocabularyProperties()
+        {
+            return await _vocabularyService.GetCurrentVocabularyProperties();
+        }
     }
 }   

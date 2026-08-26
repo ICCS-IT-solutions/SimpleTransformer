@@ -78,8 +78,7 @@ namespace SimpleTransformer.Api
                     Log.Information("Building transformer model...");
                     var config = TransformerConfig.MediumConfig; // Use the MediumConfig for a balance between performance and memory usage
                     var trainingConfig = TrainingConfig.DefaultAdamWConfig;
-                    var vocabSize = vocabulary.Count;
-                    config.UpdateFrom(vocabSize);
+                    config.UpdateFrom(vocabulary.Count);
                     Log.Information("Loading model weights and configuration...");
                     watch.Restart();
 
@@ -101,6 +100,14 @@ namespace SimpleTransformer.Api
                         // 2. Call the static factory and capture the instantiated model
                         var (model, epoch, loss) = TransformerModel.LoadCheckpoint(weightsFileStream);
 
+                        //Check to see that there is no class between the model's vocabulary size and the loaded vocabulary size.
+                        if (model.Config.VocabSize != vocabulary.Count)
+                        {
+                            throw new InvalidOperationException(
+                                $"Model vocabulary size ({model.Config.VocabSize}) " +
+                                $"does not match loaded vocabulary ({vocabulary.Count}).");
+                        }
+
                         Log.Information($"Model, weights, and configuration loaded in {watch.ElapsedMilliseconds}ms. (Epoch: {epoch}, Loss: {loss:F4})");
                         watch.Stop();
 
@@ -109,11 +116,11 @@ namespace SimpleTransformer.Api
                 });
 
                 //Services using the model should be created after the model is ready.
-                builder.Services.AddScoped<TrainingService>();
-                builder.Services.AddScoped<InferService>();
+                builder.Services.AddSingleton<TrainingService>();
+                builder.Services.AddSingleton<InferenceService>();
 
                 var app = builder.Build();
-                
+
                 app.UseCors("Frontend");
 
                 if(app.Environment.IsDevelopment())

@@ -10,12 +10,12 @@ namespace SimpleTransformer.Api.Endpoints.Controllers
 {
     [ApiController]
     [Route("")]
-    public class InferController : ControllerBase
+    public class InferenceController : ControllerBase
     {
-        private readonly InferService _service;
+        private readonly InferenceService _service;
 
-        public InferController(
-            InferService service)
+        public InferenceController(
+            InferenceService service)
         {
             _service = service;
         }

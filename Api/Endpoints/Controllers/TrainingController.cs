@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Microsoft.AspNetCore.Mvc;
 using SimpleTransformer.Api.Endpoints.Services;
 using SimpleTransformer.Api.Requests;
@@ -19,7 +20,7 @@ namespace SimpleTransformer.Api.Endpoints.Controllers
             _trainingService = trainingService;
         }
         [HttpPost("api/v1/train/live")]
-        public async Task<ApiResponse<TrainingResponse>> Train([FromBody] TrainingRequest req)
+        public async Task<ApiResponse<TrainingResponse>> TrainFromLiveInput([FromBody] TrainingRequest req)
         { 
             //Can one create temporary files in memory and pass them to the training service? I think so, but for now, let's just pass the text directly.
             var tempFilePath = Path.GetTempFileName();
@@ -31,8 +32,38 @@ namespace SimpleTransformer.Api.Endpoints.Controllers
         }
 
         [HttpPost("api/v1/train/file")]
-        public async Task<ApiResponse<TrainingResponse>> Train([FromBody] TrainingFileRequest req)
+        public async Task<ApiResponse<TrainingResponse>> TrainFromFile([FromForm] TrainingFileRequest req)
         {
+            TrainingConfig config;
+
+            if (string.IsNullOrWhiteSpace(req.Config))
+            {
+                config = TrainingConfig.DefaultAdamWConfig;
+            }
+            else
+            {
+                var rawConfigJson = req.Config;
+                Console.WriteLine(rawConfigJson);
+
+                var configJson = JsonDocument.Parse(rawConfigJson);
+                foreach (var prop in configJson.RootElement.EnumerateObject())
+                {
+                    Console.WriteLine($"{prop.Name}: {prop.Value}");
+                }
+                
+                config = JsonSerializer.Deserialize<TrainingConfig>(req.Config)
+                    ?? TrainingConfig.DefaultAdamWConfig;
+            }
+
+            if (config == null)
+            {
+                return new ApiResponse<TrainingResponse>
+                {
+                    Status = ResponseStatus.Failure,
+                    StatusCode = 400,
+                    Message = "Invalid training configuration."
+                };
+            }
             return await _trainingService.TrainModelFromTextFile(req);
         }
 

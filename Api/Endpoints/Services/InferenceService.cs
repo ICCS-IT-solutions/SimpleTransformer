@@ -7,12 +7,12 @@ using SimpleTransformer.Model.Tokenizer;
 
 namespace SimpleTransformer.Api.Endpoints.Services
 {
-    public class InferService
+    public class InferenceService
     {
         private readonly ITokenizer _tokenizer;
         private readonly TransformerModel _model;
 
-        public InferService(ITokenizer tokenizer, TransformerModel model)
+        public InferenceService(ITokenizer tokenizer, TransformerModel model)
         {
             _tokenizer = tokenizer;
             _model = model;
@@ -20,6 +20,17 @@ namespace SimpleTransformer.Api.Endpoints.Services
 
         public async Task<ApiResponse<InferenceResponse>> Infer(InferenceRequest req)
         {
+            //Now I can block inference if training is underway.
+            if(_model.IsTraining == true)
+            {
+                return new ApiResponse<InferenceResponse>
+                {
+                    Message = "Model is currently training. Please try again later.",
+                    Status = ResponseStatus.Error,
+                    StatusCode = 500
+                };
+            }
+            //Need a way to block inference if training is underway.
             if (string.IsNullOrEmpty(req.InputText)) 
                 throw new ArgumentException("Input must not be empty or null.");
 
