@@ -34,7 +34,17 @@ namespace SimpleTransformer.AppDb
             .IsUnique();
             modelBuilder.Entity<TransformerConfigPresetEntry>()
             .HasIndex(i => i.Name)
-            .IsUnique();            
+            .IsUnique();
+            //Training job entries are unique and associated with one model config, training config and vocabulary
+            modelBuilder.Entity<TrainingJobEntry>()
+            .HasIndex(i => i.Name)
+            .IsUnique();
+            modelBuilder.Entity<TrainingJobEntry>()
+            .HasIndex(i => i.TransformerConfigId);
+            modelBuilder.Entity<TrainingJobEntry>()
+            .HasIndex(i => i.TrainingConfigId);
+            modelBuilder.Entity<TrainingJobEntry>()
+            .HasIndex(i => i.VocabularyId);
         }
     }
 }
