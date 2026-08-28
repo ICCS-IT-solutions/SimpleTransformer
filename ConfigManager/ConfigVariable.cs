@@ -1,4 +1,4 @@
-namespace SimpleTransformer.ConfigManager
+namespace SimpleTransformer.Config
 {
     public class ConfigVariable
     {

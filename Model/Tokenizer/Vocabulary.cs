@@ -24,7 +24,7 @@ namespace SimpleTransformer.Model.Tokenizer
             return TokenToId.TryGetValue(token, out id);
         }
 
-        public bool TryGetToken(int id, out string token)
+        public bool TryGetToken(int id, out string? token)
         {
             return IdToToken.TryGetValue(id, out token);
         }

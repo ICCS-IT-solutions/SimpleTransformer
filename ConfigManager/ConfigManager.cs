@@ -1,4 +1,4 @@
-namespace SimpleTransformer.ConfigManager
+namespace SimpleTransformer.Config
 {
     public class ConfigManager
     {
@@ -54,7 +54,7 @@ namespace SimpleTransformer.ConfigManager
 
         public bool TryGet<T>(
             string name,
-            out T value,
+            out T? value,
             string section = "General")
             where T : IParsable<T>
         {

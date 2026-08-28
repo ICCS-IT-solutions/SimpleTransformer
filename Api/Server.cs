@@ -2,6 +2,7 @@ using SimpleTransformer.Model;
 using Serilog;
 using SimpleTransformer.Model.Tokenizer;
 using SimpleTransformer.Api.Endpoints.Services;
+using SimpleTransformer.Config;
 
 namespace SimpleTransformer.Api
 {
@@ -12,6 +13,9 @@ namespace SimpleTransformer.Api
         {
             try
             {
+                var configManager = new ConfigManager();
+                configManager.LoadFromFile("config/config.ini");
+
                 var builder = WebApplication.CreateBuilder();
 
                 builder.Host.UseSerilog();

@@ -147,10 +147,10 @@ namespace SimpleTransformer.Api.Endpoints.Services
     {
         public int VocabSize { get; set; }
         //Question now is: how to get these to populate from the model config? Do I store them in it as well?
-        public string UnknownToken { get; set; }
-        public string PaddingToken { get; set; }
-        public string MaskToken { get; set; }
-        public string BosToken { get; set; }
-        public string EosToken { get; set; }
+        public string UnknownToken { get; set; } = "<unk>";
+        public string PaddingToken { get; set; } = "<pad>";
+        public string MaskToken { get; set; } = "<mask>";
+        public string BosToken { get; set; } = "<bos>";
+        public string EosToken { get; set; } = "<eos>";
     }
 }
