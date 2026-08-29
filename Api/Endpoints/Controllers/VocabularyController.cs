@@ -28,10 +28,34 @@ namespace SimpleTransformer.Api.Endpoints.Controllers
             return await _vocabularyService.Compile(req); 
         }
 
+        [HttpGet("api/v1/vocabulary/sources")]
+        public async Task<ApiResponse<List<VocabularySourceFile>>> GetLoadVocabularySources()
+        {
+            return await _vocabularyService.GetLoadVocabularySources();
+        }
+
         [HttpGet("api/v1/vocabulary/properties")]
         public async Task<ApiResponse<VocabularyPropertiesResponse>> GetCurrentVocabularyProperties()
         {
             return await _vocabularyService.GetCurrentVocabularyProperties();
         }
+
+        [HttpPost("api/v1/vocabulary/upload")]
+        public async Task<ApiResponse<VocabularyLoaderResponse>> UploadFiles(
+            [FromForm] VocabularyUploadRequest req)
+        {
+            return await _vocabularyService.UploadFiles(req.Files);
+        }
     }
+    public class VocabularyUploadRequest
+    {
+        public List<IFormFile> Files { get; set; } = [];
+        public string? Name { get; set; }
+    }   
+
+    public class VocabularySourceFile
+    {
+        public string? Name { get; set; }
+        public float FileSize { get; set; }
+    } 
 }   

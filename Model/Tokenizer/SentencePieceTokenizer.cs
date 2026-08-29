@@ -7,6 +7,7 @@ namespace SimpleTransformer.Model.Tokenizer
 {
     public class SentencePieceTokenizer : ITokenizer
     {
+        public TokenizerType Type => TokenizerType.SentencePiece;
         private const char MetaSymbol = ' '; // U+2581 (Lower One Eighth Block)
 
         private readonly Dictionary<string, int> _tokenToId;

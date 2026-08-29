@@ -5,6 +5,7 @@ namespace SimpleTransformer.Model.Tokenizer
 {
     public class WordLevelTokenizer : ITokenizer
     {
+        public TokenizerType Type => TokenizerType.WordLevel;
         private readonly Dictionary<string, int> _tokenToId;
         private readonly Dictionary<int, string> _idToToken;
         private readonly Vocabulary _voc;

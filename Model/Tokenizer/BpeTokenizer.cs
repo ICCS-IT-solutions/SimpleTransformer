@@ -7,6 +7,7 @@ namespace SimpleTransformer.Model.Tokenizer
 {
     public class BpeTokenizer : ITokenizer
     {
+        public TokenizerType Type => TokenizerType.Bpe;
         private readonly Dictionary<string, int> _tokenToId;
         private readonly Dictionary<int, string> _idToToken;
         private readonly Dictionary<(string, string), int> _ranks;

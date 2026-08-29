@@ -5,6 +5,7 @@ namespace SimpleTransformer.Model.Tokenizer
 {
     public interface ITokenizer
     {
+        TokenizerType Type { get; }
         int EosTokenId { get; }
         int[] Encode(string text);
 

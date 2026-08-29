@@ -3,18 +3,21 @@ using Serilog;
 using SimpleTransformer.Model.Tokenizer;
 using SimpleTransformer.Api.Endpoints.Services;
 using SimpleTransformer.Config;
+using SimpleTransformer.AppDb;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace SimpleTransformer.Api
 {
     //This will be where I create a rest API backend server
     public class Server
     {
+        private static ConfigManager _configManager = new ConfigManager();
         public void Start()
         {
             try
             {
-                var configManager = new ConfigManager();
-                configManager.LoadFromFile("config/config.ini");
+                _configManager.LoadFromFile("config/config.ini");
 
                 var builder = WebApplication.CreateBuilder();
 
@@ -24,6 +27,7 @@ namespace SimpleTransformer.Api
                 {
                     options.ListenAnyIP(5000);
                 });
+                builder.Services.AddDbContext<AppDbContext>(ConfigureDbContext);
                 // Add services to the container.
                 builder.Services.AddControllers();
 
@@ -143,6 +147,69 @@ namespace SimpleTransformer.Api
             catch (Exception ex)
             {
                 Log.Warning($"{ex.Message}\nStack trace: {ex.StackTrace}");
+            }
+        }
+
+        //Determine the db engine to use based on the app configuration.
+        private static void ConfigureDbContext(
+            DbContextOptionsBuilder options)
+        {
+            Console.WriteLine("Configuring database...");
+            var dbEngine = _configManager
+                .GetValueOrDefault("Database_Engine", "Sqlite", "General");
+
+            switch (dbEngine.ToLowerInvariant())
+            {
+                case "sqlite":
+                {
+                    var connectionString = _configManager.GetValueOrDefault(
+                        "Connection_String",
+                        "Data Source=data.db",
+                        "Sqlite");
+
+                    options.UseSqlite(connectionString);
+                    break;
+                }
+
+                case "sqlserver":
+                {
+                    var connectionString = _configManager.GetValueOrDefault(
+                        "Connection_String",
+                        string.Empty,
+                        "SqlServer");
+
+                    options.UseSqlServer(connectionString);
+                    break;
+                }
+
+                case "postgres":
+                {
+                    var connectionString = _configManager.GetValueOrDefault(
+                        "Connection_String",
+                        string.Empty,
+                        "Postgres");
+
+                    options.UseNpgsql(connectionString);
+                    break;
+                }
+
+                case "mysql":
+                {
+                    var connectionString = _configManager.GetValueOrDefault(
+                        "Connection_String",
+                        string.Empty,
+                        "MySql");
+
+                    options.UseMySql(
+                        connectionString,
+                        ServerVersion.AutoDetect(connectionString));
+
+                    break;
+                }
+
+                default:
+                    throw new ArgumentException(
+                        $"Unknown database engine: {dbEngine}");
             }
         }
     }

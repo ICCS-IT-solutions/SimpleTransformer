@@ -11,27 +11,36 @@ namespace SimpleTransformer.AppDb
         public Guid TrainingConfigId { get; set; }
         public Guid VocabularyId { get; set; }
 
+
+        public TransformerConfigEntry? TransformerConfig { get; set; }
+        public TrainingConfigEntry? TrainingConfig { get; set; }
+        public VocabularyEntry? Vocabulary { get; set; }        
+
         public DateTime DateCreated { get; set; } = DateTime.UtcNow;
-        public DateTime DateStarted { get; set; }
+        public DateTime? DateStarted { get; set; }
         public DateTime? DateCompleted { get; set; }
 
         public TrainingJobStatus Status { get; set; } = TrainingJobStatus.Pending;
-        //Progress 
-        //Training epoch info
-        public int CurrentEpoch { get; set; } = 0;
-        public int EpochsCompleted { get; set; } = 0;
-        public int TotalEpochs { get; set; } = 0;
-        //Batches and sub-batches
-        public int CurrentBatch { get; set; } = 0;
-        public int BatchesCompleted { get; set; } = 0;
-        public int TotalBatches { get; set; } = 0;
-        
-        public int CurrentSubBatch { get; set; } = 0;
-        public int SubBatchesCompleted { get; set; } = 0;
-        public int TotalSubBatches { get; set; } = 0;
-        //Loss and other metrics
-        public float CurrentLoss { get; set; } = 0f;
+        // Epoch progress
+        public int CurrentEpoch { get; set; }
+        public int EpochsCompleted { get; set; }
+        public int TotalEpochs { get; set; }
+
+        // Batch progress
+        public int CurrentBatch { get; set; }
+        public int BatchesCompleted { get; set; }
+        public int TotalBatches { get; set; }
+
+        // Sub-batch progress
+        public int CurrentSubBatch { get; set; }
+        public int SubBatchesCompleted { get; set; }
+        public int TotalSubBatches { get; set; }
+
+        // Metrics
+        public float CurrentLoss { get; set; }
+
         // Latest checkpoint
-        public Guid? CurrentCheckpointId { get; set; }
+        public Guid? TrainingCheckpointId { get; set; }
+        public TrainingCheckpointEntry? TrainingCheckpoint { get; set; }
     }
 }
