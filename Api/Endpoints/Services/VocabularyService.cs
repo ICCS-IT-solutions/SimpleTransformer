@@ -2,10 +2,12 @@ using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using SimpleTransformer.Api.Endpoints.Controllers;
 using SimpleTransformer.Api.Requests;
 using SimpleTransformer.Api.Responses;
 using SimpleTransformer.AppDb;
+using SimpleTransformer.Config;
 using SimpleTransformer.Model;
 using SimpleTransformer.Model.Extensions;
 using SimpleTransformer.Model.Tokenizer;
@@ -16,17 +18,17 @@ namespace SimpleTransformer.Api.Endpoints.Services
     {
         private readonly ITokenizer _tokenizer;
         private readonly Vocabulary _vocabulary;
+        private readonly ConfigManager _configManager;
         private readonly IVocabularyCompiler _vocabularyCompiler;
-        private readonly TransformerModel _model;
-        private readonly AppDbContext _db;
+        private readonly IDbContextFactory<AppDbContext> _dbFactory;
 
-        public VocabularyService(ITokenizer tokenizer, IVocabularyCompiler vocabularyCompiler, TransformerModel model, Vocabulary vocabulary, AppDbContext db)
+        public VocabularyService(ITokenizer tokenizer, IVocabularyCompiler vocabularyCompiler, Vocabulary vocabulary, IDbContextFactory<AppDbContext> dbFactory, ConfigManager configManager)
         {
             _tokenizer = tokenizer;
             _vocabularyCompiler = vocabularyCompiler;
-            _model = model;
             _vocabulary = vocabulary;
-            _db = db;
+            _configManager = configManager;
+            _dbFactory = dbFactory;
         }
 
         public async Task<ApiResponse<VocabularyLoaderResponse>> LoadFromFile(LoadVocabularyRequest req)
@@ -52,11 +54,28 @@ namespace SimpleTransformer.Api.Endpoints.Services
 
         }
 
+        public async Task<ApiResponse<AvailableVocabulariesResponse>> GetAvailableVocabulariesAsync()
+        {
+            await using var db = await _dbFactory.CreateDbContextAsync();
+            var vocabularies = db.Vocabularies.ToList();
+            return new ApiResponse<AvailableVocabulariesResponse>
+            {
+                Status = ResponseStatus.Success,
+                StatusCode = 200,
+                Data = new AvailableVocabulariesResponse
+                {
+                    Vocabularies = vocabularies
+                }
+            };
+        }
+
         public async Task<ApiResponse<VocabularyCompilationResponse>> Compile(CompileVocabularyRequest req)
         {
-            //Note to self: Example file format: vocabulary<tokenizerName>-<numTokens>-<dateCreated>.json
+            await using var db = await _dbFactory.CreateDbContextAsync();
             //Store in vocabularies\compiled
-            var compiledFolder = Path.Combine(Directory.GetCurrentDirectory(), "vocabularies", "compiled");
+            var sourceDir = _configManager.GetValue("vocabulary_Source_Directory", "Paths");
+            var compiledFolder = _configManager.GetValue("vocabulary_Compiled_Directory", "Paths");
+            var vocabSize = int.Parse(_configManager.GetValue("num_tokens_medium", "Vocabulary"));
 
             if (req.Files == null || req.Files.Count == 0)
             {
@@ -71,7 +90,7 @@ namespace SimpleTransformer.Api.Endpoints.Services
             //Compile a single file
             if (req.Files.Count == 1)
             {
-                var vocabularyResult = _vocabularyCompiler.BuildFromRawTextFile(req.Files[0]);
+                var vocabularyResult = _vocabularyCompiler.BuildFromRawTextFile(sourceDir, req.Files[0], vocabSize);
 
                 var response = new VocabularyCompilationResponse
                 {
@@ -85,19 +104,21 @@ namespace SimpleTransformer.Api.Endpoints.Services
                         Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
                     });
 
-                await File.WriteAllTextAsync($"{compiledFolder}/vocabulary.json", vocabJson);
+                var dest = $"{compiledFolder}/{_tokenizer.Type}/{vocabularyResult.Vocabulary.Count}";
+                if (!Directory.Exists(dest)) Directory.CreateDirectory(dest);
+                await File.WriteAllTextAsync($"{dest}/vocabulary.json", vocabJson);
 
                 //Save the vocabulary to the database
                 var vocab = new VocabularyEntry
                 {
-                    Name = req.Files[0],
+                    Name = $"vocabulary-{_tokenizer.Type}-{vocabSize}-{DateTime.Now.ToFileTimeUtc()}",
                     TokenizerType = _tokenizer.Type,
                     NumTokens = vocabularyResult.Vocabulary.Count,
                     Filename = "vocabulary.json",
-                    Filepath = "vocabularies/compiled"
+                    Filepath = compiledFolder
                 };
-                await _db.Vocabularies.AddAsync(vocab);
-                await _db.SaveChangesAsync();
+                await db.Vocabularies.AddAsync(vocab);
+                await db.SaveChangesAsync();
 
                 return new ApiResponse<VocabularyCompilationResponse>
                 {
@@ -111,7 +132,7 @@ namespace SimpleTransformer.Api.Endpoints.Services
             if (req.Files.Count > 1)
             {
                 //Compile multiple files
-                var vocabularyResult = _vocabularyCompiler.BuildFromRawTextFiles(req.Files);
+                var vocabularyResult = _vocabularyCompiler.BuildFromRawTextFiles(sourceDir, req.Files, vocabSize);
 
                 var response = new VocabularyCompilationResponse
                 {
@@ -124,23 +145,25 @@ namespace SimpleTransformer.Api.Endpoints.Services
                         WriteIndented = true,
                         Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
                     });
-                await File.WriteAllTextAsync($"{compiledFolder}/vocabulary.json", vocabJson);
+                var dest = $"{compiledFolder}/{_tokenizer.Type}/{vocabularyResult.Vocabulary.Count}";
+                if (!Directory.Exists(dest)) Directory.CreateDirectory(dest);
+                await File.WriteAllTextAsync($"{dest}/vocabulary.json", vocabJson);
 
                 //Note to self: Create a better method for naming vocabularies so that they are unique
                 var vocab = new VocabularyEntry
                 {
-                    Name = req.Files[0],
+                    Name = $"vocabulary-{_tokenizer.Type}-{vocabSize}-{DateTime.Now.ToFileTimeUtc()}",
                     TokenizerType = _tokenizer.Type,
                     NumTokens = vocabularyResult.Vocabulary.Count,
                     Filename = "vocabulary.json",
-                    Filepath = "vocabularies/compiled"
+                    Filepath = compiledFolder
                 };
-                await _db.Vocabularies.AddAsync(vocab);
-                await _db.SaveChangesAsync();
+                await db.Vocabularies.AddAsync(vocab);
+                await db.SaveChangesAsync();
 
                 return new ApiResponse<VocabularyCompilationResponse>
                 {
-                    Message = $"Vocabulary compiled successfully. Total files: {req.Files.Count}",
+                    Message = $"Vocabulary compiled successfully. Total files processed: {req.Files.Count}",
                     Status = ResponseStatus.Success,
                     StatusCode = 200,
                     Data = response
@@ -178,14 +201,24 @@ namespace SimpleTransformer.Api.Endpoints.Services
         }
         public async Task<ApiResponse<VocabularyLoaderResponse>> UploadFiles(List<IFormFile> files)
         {
+            var sourceFolder = _configManager.GetValue("vocabulary_Source_Directory", "Paths");
             foreach (var file in files)
             {
                 //Copy them to the vocabularies\src folder
-                var filePath = Path.Combine(Directory.GetCurrentDirectory(), "vocabularies", "src", file.FileName);
+                var filePath = Path.Combine(sourceFolder, file.FileName);
+                if (string.IsNullOrEmpty(filePath))
+                {
+                    return new ApiResponse<VocabularyLoaderResponse>
+                    {
+                        Status = ResponseStatus.Error,
+                        StatusCode = 500,
+                        Data = null
+                    };
+                }
                 //If the folder does not exist, create it
                 if (!Directory.Exists(Path.GetDirectoryName(filePath)))
                 {
-                    Directory.CreateDirectory(Path.GetDirectoryName(filePath));
+                    Directory.CreateDirectory(Path.GetDirectoryName(filePath)!);
                 }
                 using (var stream = new FileStream(filePath, FileMode.Create))
                 {
@@ -205,7 +238,8 @@ namespace SimpleTransformer.Api.Endpoints.Services
         }
         public async Task<ApiResponse<List<VocabularySourceFile>>> GetLoadVocabularySources()
         {
-            var srcFiles = Directory.GetFiles(Path.Combine(Directory.GetCurrentDirectory(), "vocabularies", "src"));
+            var sourceFolder = _configManager.GetValue("vocabulary_Source_Directory", "Paths");
+            var srcFiles = Directory.GetFiles(sourceFolder);
             return new ApiResponse<List<VocabularySourceFile>>
             {
                 Status = ResponseStatus.Success,

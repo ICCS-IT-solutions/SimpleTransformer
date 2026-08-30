@@ -9,7 +9,7 @@ using SimpleTransformer.Model.Extensions.Numerics;
 namespace SimpleTransformer.Model
 {
     //Future work: Implement batched training and gradient clipping by norm.
-    public class TransformerModel
+    public class TransformerModel : IDisposable
     {
         //These don't yet exist, but are created when the constructor calls BuildModel(). 
         private EmbeddingLayer _embedding = null!;
@@ -104,20 +104,6 @@ namespace SimpleTransformer.Model
         public void BeginTraining() => _isTraining = true;
         public void EndTraining() => _isTraining = false;
         
-        public TransformerModel CreateFromConfig(TransformerConfig? config, TrainingConfig? trainingConfig)
-        {
-            return new TransformerModel(config, trainingConfig);
-        }
-
-        public static async Task<TransformerModel> FromCheckpointAsync(string filepath, TrainingService trainingService)
-        {
-            // FromCheckpointFileAsync already instantiates the model and hydrates its weights
-            var checkpoint = await FromCheckpointFileAsync(filepath);
-
-            return checkpoint.Model;
-        }
-
-
         public (TensorBase logits, TensorBase hiddenState) Forward(TensorBase input)
         {
             Log.Information("Starting forward pass through the transformer model...");
@@ -275,21 +261,9 @@ namespace SimpleTransformer.Model
         }
 
         /// <summary>
-        /// Convenient file-path helper wrapper around Stream deserialization.
-        /// </summary>
-        public static async Task<(TransformerModel Model, int Epoch, float Loss)> FromCheckpointFileAsync(string filePath)
-        {
-            if (!File.Exists(filePath))
-                throw new FileNotFoundException($"Checkpoint file not found: {filePath}");
-
-            await using var stream = File.OpenRead(filePath);
-            return LoadCheckpoint(stream);
-        }
-
-        /// <summary>
         /// Static factory method to instantiate and hydrate a TransformerModel directly from a checkpoint stream.
         /// </summary>
-        public static (TransformerModel Model, int Epoch, float Loss) LoadCheckpoint(Stream sourceStream)
+        public static (int Epoch, float Loss) LoadCheckpoint(Stream sourceStream, TransformerModel model)
         {
             using var reader = new BinaryReader(sourceStream, Encoding.UTF8, leaveOpen: true);
 
@@ -308,7 +282,7 @@ namespace SimpleTransformer.Model
             float loss = reader.ReadSingle();
 
             var config = CheckpointConfigExtensions.ReadConfig(reader);
-            var model = new TransformerModel(config);
+            model = new TransformerModel(config);
 
             int paramCount = reader.ReadInt32();
             var loadedParameters = new List<TrainableParameterCheckpoint>(paramCount);
@@ -334,7 +308,7 @@ namespace SimpleTransformer.Model
             }
 
             model.LoadCheckpointData(loadedParameters);
-            return (model, epoch, loss);
+            return (epoch, loss);
         }       
 
         private static TensorData ReadTensorOptimized(BinaryReader reader)
@@ -688,6 +662,24 @@ namespace SimpleTransformer.Model
             }
 
             return totalNorm;
-        }        
+        }
+
+        public void Dispose()
+        {
+            // Dispose layers/resources that own unmanaged or pooled resources.
+            _embedding?.Dispose();
+            _position?.Dispose();
+            _outputProjection?.Dispose();
+
+            foreach (var layer in _layers)
+            {
+                if (layer is IDisposable disposable)
+                    disposable.Dispose();
+            }
+
+            _workspace?.Dispose();
+
+            GC.SuppressFinalize(this);
+        }
     }
 }

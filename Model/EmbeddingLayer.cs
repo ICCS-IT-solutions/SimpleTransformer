@@ -5,7 +5,7 @@ using SimpleTransformer.Model.Extensions.Numerics;
 
 namespace SimpleTransformer.Model
 {
-    public class EmbeddingLayer : ITrainableLayer
+    public class EmbeddingLayer : ITrainableLayer, IDisposable
     {
         private readonly int _vocabSize;
         private readonly int _embeddingSize;
@@ -151,6 +151,13 @@ namespace SimpleTransformer.Model
         public void ZeroGradients()
         {
             TensorUtilitiesSimd.Fill(_embeddingGradient, 0f);
+        }
+
+        public void Dispose()
+        {
+            //Clean up anything used here
+            _embeddings.Dispose();
+            _embeddingGradient.Dispose();
         }
     }
 }

@@ -5,7 +5,8 @@ using SimpleTransformer.Api.Endpoints.Services;
 using SimpleTransformer.Config;
 using SimpleTransformer.AppDb;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.DependencyInjection;
+using Microsoft.EntityFrameworkCore.Design;
+using SimpleTransformer.Api.Endpoints.Factories;
 
 namespace SimpleTransformer.Api
 {
@@ -19,6 +20,8 @@ namespace SimpleTransformer.Api
             {
                 _configManager.LoadFromFile("config/config.ini");
 
+                SQLitePCL.Batteries.Init();
+
                 var builder = WebApplication.CreateBuilder();
 
                 builder.Host.UseSerilog();
@@ -26,8 +29,17 @@ namespace SimpleTransformer.Api
                 builder.WebHost.ConfigureKestrel(options =>
                 {
                     options.ListenAnyIP(5000);
-                });
-                builder.Services.AddDbContext<AppDbContext>(ConfigureDbContext);
+                });  
+
+                builder.Services.AddSingleton<ConfigManager>(_configManager); 
+
+                var optionsBuilder = new DbContextOptionsBuilder<AppDbContext>();
+
+                DbContextConfiguration.ConfigureDbContext(optionsBuilder, _configManager);
+
+                builder.Services.AddDbContextFactory<AppDbContext>(options =>  DbContextConfiguration.ConfigureDbContext(options, _configManager));
+                builder.Services.AddScoped<ITransformerModelFactory, TransformerModelFactory>();
+                builder.Services.AddDbContext<AppDbContext>(options => DbContextConfiguration.ConfigureDbContext(options, _configManager));
                 // Add services to the container.
                 builder.Services.AddControllers();
 
@@ -73,61 +85,21 @@ namespace SimpleTransformer.Api
                     var vocab = provider.GetRequiredService<Vocabulary>();
                     return new SentencePieceTokenizer(vocab);
                 });
-                builder.Services.AddSingleton<TransformerModel>(provider =>
-                {
-                    Log.Information("Instantiating vocabulary and model...");
-                    //Start a timer to track how long it takes to load the model.
-                    var watch = System.Diagnostics.Stopwatch.StartNew();
-                    Log.Information("Loading vocabulary...");
-                    var vocabulary = provider.GetRequiredService<Vocabulary>();
-                    Log.Information($"Vocabulary loaded in {watch.ElapsedMilliseconds}ms.");
-
-                    watch.Restart();
-                    Log.Information("Building transformer model...");
-                    var config = TransformerConfig.MediumConfig; // Use the MediumConfig for a balance between performance and memory usage
-                    var trainingConfig = TrainingConfig.DefaultAdamWConfig;
-                    config.UpdateFrom(vocabulary.Count);
-                    Log.Information("Loading model weights and configuration...");
-                    watch.Restart();
-
-                    var weightsFile = "model_weights.bin";
-
-                    if (!File.Exists(weightsFile))
-                    {
-                        // If the weights file does not exist, we can instantiate a new model with random weights.
-                        Log.Warning($"Weights file '{weightsFile}' not found. Instantiating a new model with random weights.");
-                        var model = new TransformerModel(config, trainingConfig);
-                        Log.Information($"Model instantiated in {watch.ElapsedMilliseconds}ms.");
-                        return model;
-                    }
-                    else
-                    {
-                        // 1. Open the file stream safely
-                        using var weightsFileStream = File.OpenRead(weightsFile);
-
-                        // 2. Call the static factory and capture the instantiated model
-                        var (model, epoch, loss) = TransformerModel.LoadCheckpoint(weightsFileStream);
-
-                        //Check to see that there is no class between the model's vocabulary size and the loaded vocabulary size.
-                        if (model.Config.VocabSize != vocabulary.Count)
-                        {
-                            throw new InvalidOperationException(
-                                $"Model vocabulary size ({model.Config.VocabSize}) " +
-                                $"does not match loaded vocabulary ({vocabulary.Count}).");
-                        }
-
-                        Log.Information($"Model, weights, and configuration loaded in {watch.ElapsedMilliseconds}ms. (Epoch: {epoch}, Loss: {loss:F4})");
-                        watch.Stop();
-
-                        return model;
-                    }
-                });
-
+                
                 //Services using the model should be created after the model is ready.
                 builder.Services.AddSingleton<TrainingService>();
                 builder.Services.AddSingleton<InferenceService>();
+                builder.Services.AddSingleton<TransformerModelService>();
+                builder.Services.AddSingleton<ConfigService>();
 
                 var app = builder.Build();
+
+                //Finetune the database before handling requests
+                using (var scope = app.Services.CreateScope())
+                {
+                    var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                    DbContextConfiguration.InitializeDatabase(dbContext);
+                }
 
                 app.UseCors("Frontend");
 
@@ -150,67 +122,25 @@ namespace SimpleTransformer.Api
             }
         }
 
-        //Determine the db engine to use based on the app configuration.
-        private static void ConfigureDbContext(
-            DbContextOptionsBuilder options)
+        public class AppDbContextFactory
+            : IDesignTimeDbContextFactory<AppDbContext>
         {
-            Console.WriteLine("Configuring database...");
-            var dbEngine = _configManager
-                .GetValueOrDefault("Database_Engine", "Sqlite", "General");
-
-            switch (dbEngine.ToLowerInvariant())
+            public AppDbContext CreateDbContext(string[] args)
             {
-                case "sqlite":
-                {
-                    var connectionString = _configManager.GetValueOrDefault(
-                        "Connection_String",
-                        "Data Source=data.db",
-                        "Sqlite");
+                var configManager = new ConfigManager();
 
-                    options.UseSqlite(connectionString);
-                    break;
-                }
+                var optionsBuilder =
+                    new DbContextOptionsBuilder<AppDbContext>();
 
-                case "sqlserver":
-                {
-                    var connectionString = _configManager.GetValueOrDefault(
-                        "Connection_String",
-                        string.Empty,
-                        "SqlServer");
+                DbContextConfiguration.ConfigureDbContext(
+                    optionsBuilder,
+                    configManager);
 
-                    options.UseSqlServer(connectionString);
-                    break;
-                }
-
-                case "postgres":
-                {
-                    var connectionString = _configManager.GetValueOrDefault(
-                        "Connection_String",
-                        string.Empty,
-                        "Postgres");
-
-                    options.UseNpgsql(connectionString);
-                    break;
-                }
-
-                case "mysql":
-                {
-                    var connectionString = _configManager.GetValueOrDefault(
-                        "Connection_String",
-                        string.Empty,
-                        "MySql");
-
-                    options.UseMySql(
-                        connectionString,
-                        ServerVersion.AutoDetect(connectionString));
-
-                    break;
-                }
-
-                default:
-                    throw new ArgumentException(
-                        $"Unknown database engine: {dbEngine}");
+                return new AppDbContext(optionsBuilder.Options);
             }
         }
+
+        //Determine the db engine to use based on the app configuration.
+
     }
 }

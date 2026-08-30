@@ -1,6 +1,9 @@
 using System.Text;
+using SimpleTransformer.Api.Endpoints.Factories;
 using SimpleTransformer.Api.Requests;
 using SimpleTransformer.Api.Responses;
+using SimpleTransformer.AppDb;
+using SimpleTransformer.Config;
 using SimpleTransformer.Model;
 using SimpleTransformer.Model.Extensions;
 using SimpleTransformer.Model.Tokenizer;
@@ -9,19 +12,24 @@ namespace SimpleTransformer.Api.Endpoints.Services
 {
     public class InferenceService
     {
+        private readonly AppDbContext _db;
+        private readonly ITransformerModelFactory _modelFactory;
+        private readonly ConfigManager _configManager;
         private readonly ITokenizer _tokenizer;
-        private readonly TransformerModel _model;
 
-        public InferenceService(ITokenizer tokenizer, TransformerModel model)
+        public InferenceService(ITokenizer tokenizer, ConfigManager configManager, AppDbContext db, ITransformerModelFactory modelFactory)
         {
             _tokenizer = tokenizer;
-            _model = model;
+            _configManager = configManager;
+            _modelFactory = modelFactory;
+            _db = db;
         }
 
         public async Task<ApiResponse<InferenceResponse>> Infer(InferenceRequest req)
         {
+            using var model = await _modelFactory.CreateModelAsync(req.TransformerModelId);
             //Now I can block inference if training is underway.
-            if(_model.IsTraining == true)
+            if(model.IsTraining == true)
             {
                 return new ApiResponse<InferenceResponse>
                 {
@@ -42,7 +50,7 @@ namespace SimpleTransformer.Api.Endpoints.Services
 
             // 3. Run Auto-Regressive Generation
             // Change line 33:
-            var (generatedTokens, lastLogits, lastProbabilities, lastHiddenState) = GenerateSequence(
+            var (generatedTokens, lastLogits, lastProbabilities, lastHiddenState) = GenerateSequence(model,
                 inputTokens.ToList(), maxNewTokens, req.GenerationParameters.Penalty, req.GenerationParameters.TopK, 
                 req.GenerationParameters.TopP, req.GenerationParameters.Temperature);
 
@@ -66,7 +74,7 @@ namespace SimpleTransformer.Api.Endpoints.Services
             var debugOutputSb = new StringBuilder();
             debugOutputSb.AppendLine("Input: " + req.InputText);
             debugOutputSb.AppendLine("----------------------------------------------------------------------------------");
-            debugOutputSb.AppendLine("Model vocabulary size: " + _model.Config.VocabSize);
+            debugOutputSb.AppendLine("Model vocabulary size: " + model.Config.VocabSize);
             debugOutputSb.AppendLine("Tokenizer vocabulary size: " + _tokenizer.VocabularySize);
             debugOutputSb.AppendLine("----------------------------------------------------------------------------------");
             debugOutputSb.AppendLine("Initial Prompt Tokens: " + string.Join(", ", inputTokens.Select(x => x.ToString())));
@@ -90,12 +98,14 @@ namespace SimpleTransformer.Api.Endpoints.Services
         /// </summary>
         private (List<int> tokens, TensorBase lastLogits, TensorBase lastProbs, TensorBase lastHiddenState) 
             GenerateSequence(
+                TransformerModel model,
                 List<int> promptTokens, 
                 int maxNewTokens, 
                 float penalty = 1.2f, 
                 int topK = 10, 
                 float topP = 0.9f, 
-                float temperature = 0.8f)
+                float temperature = 0.8f
+                )
         {
             var currentSequence = new List<int>(promptTokens);
 
@@ -105,14 +115,14 @@ namespace SimpleTransformer.Api.Endpoints.Services
 
             for (int i = 0; i < maxNewTokens; i++)
             {
-                int contextSize = Math.Min(currentSequence.Count, _model.Config.MaxSequenceLength);
+                int contextSize = Math.Min(currentSequence.Count, model.Config.MaxSequenceLength);
                 var context = currentSequence
                     .GetRange(currentSequence.Count - contextSize, contextSize)
                     .ToArray();
 
                 var inputTensor = TokenizationUtilities.FromTokenIds(context);
 
-                var (_, _, logits, probabilities, hiddenState) = _model.Predict(inputTensor);
+                var (_, _, logits, probabilities, hiddenState) = model.Predict(inputTensor);
 
                 lastLogits = logits;
                 lastProbs = probabilities;

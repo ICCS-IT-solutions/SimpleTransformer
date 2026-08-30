@@ -200,5 +200,13 @@ namespace SimpleTransformer.Model
 
             _outputProjection.ZeroGradients();
         }
+
+        public void Dispose()
+        {
+            for (int i = 0; i < _heads.Length; i++)
+            {
+                _heads[i].Dispose();
+            }
+        }
     }
 }

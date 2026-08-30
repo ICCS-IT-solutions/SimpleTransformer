@@ -436,6 +436,13 @@ namespace SimpleTransformer.Model
             }
         }
 
+        public void Dispose()
+        {
+            _loraAGradient.Dispose();
+            _loraBGradient.Dispose();
+            _biasGradient?.Dispose();
+        }
+
         #endregion
     }
 }

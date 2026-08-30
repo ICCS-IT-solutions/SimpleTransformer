@@ -1,7 +1,10 @@
+using System.ComponentModel.DataAnnotations;
+
 namespace SimpleTransformer.AppDb
 {
     public class TrainingCheckpointEntry
     {
+        [Key]
         public Guid EntryId { get; set; } = Guid.NewGuid();
         public required string Filename { get; set; }
         public required string Filepath { get; set; }

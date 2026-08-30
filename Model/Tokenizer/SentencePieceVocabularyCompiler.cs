@@ -21,21 +21,33 @@ namespace SimpleTransformer.Model.Tokenizer
             [SpecialTokens.Mask] = 4,
         };
 
-        public VocabularyCompilationResult BuildFromRawTextFile(string src, int targetVocabSize = 5000)
+        public VocabularyCompilationResult BuildFromRawTextFile(
+            string sourceDirectory,
+            string filename,
+            int targetVocabSize = 5000)
         {
-            ValidateSourceFile(src);
-            string text = File.ReadAllText(src);
-            return TrainSentencePiece(new[] { text }, targetVocabSize);
+            return BuildFromRawTextFiles(
+                sourceDirectory,
+                new[] { filename },
+                targetVocabSize);
         }
 
-        public VocabularyCompilationResult BuildFromRawTextFiles(IEnumerable<string> srcFiles, int targetVocabSize = 5000)
+        public VocabularyCompilationResult BuildFromRawTextFiles(
+            string sourceDirectory,
+            IEnumerable<string> filenames,
+            int targetVocabSize = 5000)
         {
             List<string> texts = new();
-            foreach (string file in srcFiles)
+
+            foreach (string filename in filenames)
             {
-                ValidateSourceFile(file);
-                texts.Add(File.ReadAllText(file));
+                var sourcePath = Path.Combine(sourceDirectory, filename);
+
+                ValidateSourceFile(sourcePath);
+
+                texts.Add(File.ReadAllText(sourcePath));
             }
+
             return TrainSentencePiece(texts, targetVocabSize);
         }
 

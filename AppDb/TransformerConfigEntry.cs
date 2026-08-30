@@ -1,9 +1,11 @@
+using System.ComponentModel.DataAnnotations;
 using SimpleTransformer.Model;
 
 namespace SimpleTransformer.AppDb
 {
     public class TransformerConfigEntry
     {
+        [Key]
         public Guid EntryId { get; set; } = Guid.NewGuid();
         public required string Name { get; set; }
         public required string Description { get; set; }
@@ -13,6 +15,7 @@ namespace SimpleTransformer.AppDb
 
     public class TransformerConfigPresetEntry
     {
+        [Key]
         public Guid EntryId { get; set; } = Guid.NewGuid();
         public required string Name { get; set; }
         public required Guid TransformerConfigId { get; set; }

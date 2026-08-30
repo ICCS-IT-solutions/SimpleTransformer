@@ -5,12 +5,21 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Launch",
+            "name": "Launch (external console)",
             "type": "coreclr",
             "preLaunchTask": "build",
             "program": "${workspaceFolder}/bin/Debug/net9.0/SimpleTransformer.dll",
             "cwd": "${workspaceFolder}",
             "console": "externalTerminal",
+            "request": "launch"
+        },
+        {
+            "name": "Launch (internal console)",
+            "type": "coreclr",
+            "preLaunchTask": "build",
+            "program": "${workspaceFolder}/bin/Debug/net9.0/SimpleTransformer.dll",
+            "cwd": "${workspaceFolder}",
+            "console": "internalConsole",
             "request": "launch"
         },
         {

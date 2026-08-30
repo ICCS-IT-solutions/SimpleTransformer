@@ -1,3 +1,4 @@
+using System.ComponentModel.DataAnnotations;
 using System.Text.Json.Serialization;
 using SimpleTransformer.Model.Tokenizer;
 
@@ -5,6 +6,7 @@ namespace SimpleTransformer.AppDb
 {
     public class VocabularyEntry
     {
+        [Key]
         public Guid EntryId { get; set; } = Guid.NewGuid();
         public required string Name { get; set; }
         //Infer from the tokenizer used to create this, store as a json string in the db

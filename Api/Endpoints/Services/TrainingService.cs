@@ -1,31 +1,48 @@
-using System.Collections.ObjectModel;
-using System.IO;
 using System.Text.Encodings.Web;
 using System.Text.Json;
-using System.Threading.Tasks;
+using Microsoft.EntityFrameworkCore;
 using Serilog;
+using SimpleTransformer.Api.Endpoints.Factories;
 using SimpleTransformer.Api.Requests;
 using SimpleTransformer.Api.Responses;
+using SimpleTransformer.AppDb;
+using SimpleTransformer.Config;
 using SimpleTransformer.Model;
 using SimpleTransformer.Model.Tokenizer;
-using static SimpleTransformer.Api.Endpoints.Services.TrainingServiceExtensions;
 
 namespace SimpleTransformer.Api.Endpoints.Services
 {
     public class TrainingService
     {
-        private TransformerModel _model;
+        private readonly IDbContextFactory<AppDbContext> _dbFactory;
+        private readonly ITransformerModelFactory _transformerModelFactory;
+        private readonly ConfigManager _configManager;
         private readonly ITokenizer _tokenizer;
-        private readonly List<TrainingJobEntry> _jobs = new();
 
-        public TrainingService(TransformerModel model, ITokenizer tokenizer)
+        public TrainingService(ITokenizer tokenizer, ConfigManager configManager, IDbContextFactory<AppDbContext> dbFactory, ITransformerModelFactory transformerModelFactory)
         {
-            _model = model;
             _tokenizer = tokenizer;
+            _configManager = configManager;
+            _dbFactory = dbFactory;
+            _transformerModelFactory = transformerModelFactory;
         }
 
         public async Task<ApiResponse<TrainingResponse>> TrainModelFromText(TrainingRequest req)
         {
+            await using var db = await _dbFactory.CreateDbContextAsync();
+            var modelEntry = db.TransformerModels.FirstOrDefault(x => x.EntryId == req.TransformerModelId);
+
+            if(modelEntry == null)
+            {
+                return new ApiResponse<TrainingResponse>
+                {
+                    Message = "Model not found.",
+                    Status = ResponseStatus.Failure,
+                    StatusCode = 404
+                };
+            }
+
+            using var model = await _transformerModelFactory.CreateModelAsync(req.TransformerModelId);
             if (string.IsNullOrEmpty(req.InputText))
             {
                 return new ApiResponse<TrainingResponse>
@@ -37,20 +54,26 @@ namespace SimpleTransformer.Api.Endpoints.Services
             }
             var job = new TrainingJobEntry
             {
-                JobId = Guid.NewGuid(),                
+                Name = $"Training job {DateTime.UtcNow}",
+                EntryId = Guid.NewGuid(),                
                 Status = TrainingJobStatus.Pending,
+                TrainingConfigId = modelEntry.TrainingConfigId,
+                TransformerConfigId = modelEntry.TransformerConfigId,
                 Message = "Training job created.",
-                LastUpdatedAt = DateTime.UtcNow
+                DateUpdated = DateTime.UtcNow,
+                
+                //Vocabulary related
+                VocabularyId = req.VocabularyId,
             };
             int startEpoch = 0;
 
             //Register the job.
-            RegisterJob(job);
+            await RegisterJob(job);
 
             // 1. Resume from checkpoint using TransformerModel's load logic
             if (!string.IsNullOrWhiteSpace(req.PreviousCheckpoint) && File.Exists(req.PreviousCheckpoint))
             {
-                UpdateJob(job.JobId, job =>
+                await UpdateJob(job.EntryId, job =>
                 {
                     job.Message = "Loading previous checkpoint...";
                 });
@@ -58,12 +81,11 @@ namespace SimpleTransformer.Api.Endpoints.Services
                 Log.Information("Loading training state from checkpoint: {Path}", req.PreviousCheckpoint);
                 
                 await using var stream = File.OpenRead(req.PreviousCheckpoint);
-                var (loadedModel, savedEpoch, savedLoss) = TransformerModel.LoadCheckpoint(stream);
+                var (savedEpoch, savedLoss) = TransformerModel.LoadCheckpoint(stream, model);
                 
-                _model = loadedModel;
                 startEpoch = savedEpoch + 1; // Resume on the next epoch
 
-                UpdateJob(job.JobId, job =>
+                await UpdateJob(job.EntryId, job =>
                 {
                     job.Message = $"Resuming training from epoch {startEpoch}.";
                     job.CurrentEpoch = startEpoch;
@@ -76,12 +98,9 @@ namespace SimpleTransformer.Api.Endpoints.Services
 
             try
             {
-                config = req.Config != null
-                    ? JsonSerializer.Deserialize<TrainingConfig>(req.Config)
-                        ?? TrainingConfig.DefaultAdamWConfig
-                    : TrainingConfig.DefaultAdamWConfig;
+                config = db.TrainingConfigs.FirstOrDefault(x => x.EntryId == modelEntry.TrainingConfigId)?.Config ?? throw new InvalidOperationException("Training config not found.");
             }
-            catch (JsonException ex)
+            catch (Exception ex)
             {
                 return new ApiResponse<TrainingResponse>
                 {
@@ -91,8 +110,8 @@ namespace SimpleTransformer.Api.Endpoints.Services
                 };
             }
 
-            var samples = CreateTrainingSamples(req.InputText);
-            var miniBatches = CreateMiniBatches(samples);
+            var samples = CreateTrainingSamples(model, req.InputText);
+            var miniBatches = CreateMiniBatches(model, samples);
             var numBatches = miniBatches.Count;
             Log.Information($"{numBatches} batches created from {samples.Count} samples.");
             // Determine chunkSize dynamically based on miniBatches count
@@ -112,7 +131,7 @@ namespace SimpleTransformer.Api.Endpoints.Services
             var totalEpochs = startEpoch + (config?.Epochs ?? 10); // Default to 10 epochs if not specified
 
             //Update the job status
-            UpdateJob(job.JobId, job =>
+            await UpdateJob(job.EntryId, job =>
             {
                 job.Status = TrainingJobStatus.Started;
                 job.CurrentEpoch = startEpoch;
@@ -121,7 +140,7 @@ namespace SimpleTransformer.Api.Endpoints.Services
                 job.CurrentBatch = 0;
                 job.TotalBatches = totalOuterBatches;
 
-                job.NumSubBatches = chunkSize;
+                job.TotalSubBatches = chunkSize;
                 job.CurrentSubBatch = 0;
 
                 job.Message =
@@ -130,7 +149,7 @@ namespace SimpleTransformer.Api.Endpoints.Services
             });
 
             // 1. Begin training. This notifies other endpoint services that the model is busy training and should not be used.
-            _model.BeginTraining();
+            model.BeginTraining();
             try
             {
                 // 2. Training loop
@@ -140,7 +159,7 @@ namespace SimpleTransformer.Api.Endpoints.Services
                     // Single Random instance reused across the engine
                     var rng = new Random();
 
-                    UpdateJob(job.JobId, job =>
+                    await UpdateJob(job.EntryId, job =>
                     {
                         job.Status = TrainingJobStatus.Running;
                         job.CurrentEpoch = epoch + 1;
@@ -153,10 +172,10 @@ namespace SimpleTransformer.Api.Endpoints.Services
                     {
                         // Shuffle the outer sub-batch groups ONCE per epoch
                         var shuffledSubBatches = Shuffle(subBatches.ToList(), rng);
-                        UpdateJob (job.JobId, job => 
+                        await UpdateJob (job.EntryId, job => 
                         {
                             job.Message = $"Shuffling batches (epoch {epoch + 1}/{totalEpochs}).";
-                            job.NumSubBatches = chunkSize;
+                            job.TotalSubBatches = chunkSize;
                         });
 
                         for (int batch = 0; batch < shuffledSubBatches.Count; batch++)
@@ -165,7 +184,7 @@ namespace SimpleTransformer.Api.Endpoints.Services
                                 batch == 0 ||
                                 batch == numBatches - 1)
                             {
-                                UpdateJob(job.JobId, job =>
+                                await UpdateJob(job.EntryId, job =>
                                 {
                                     job.CurrentBatch = batch + 1;
                                     job.CurrentLoss = epochLoss;
@@ -180,12 +199,12 @@ namespace SimpleTransformer.Api.Endpoints.Services
                             for (int subBatch = 0; subBatch < currentSubBatch.Count(); subBatch++)
                             {
                                 var item = currentSubBatch[subBatch];
-                                epochLoss += _model.TrainStep(item.Inputs, item.Targets);
+                                epochLoss += model.TrainStep(item.Inputs, item.Targets);
 
                                 // Correct parenthesis grouping for modulus
                                 if ((subBatch + 1) % 4 == 0 || subBatch == 0)
                                 {
-                                    UpdateJob(job.JobId, job => job.CurrentSubBatch = subBatch + 1);
+                                    await UpdateJob(job.EntryId, job => job.CurrentSubBatch = subBatch + 1);
                                     Log.Information($"Epoch {epoch + 1}, Batch {batch + 1}, Sub-Batch {subBatch + 1} training loss: {epochLoss:F6}");
                                 }
                             }
@@ -193,24 +212,24 @@ namespace SimpleTransformer.Api.Endpoints.Services
                             //This can help prevent loss of progress should a training run fail or be stopped.
                             string checkpointFileName = Path.Combine("checkpoints", $"checkpoint-epoch-{epoch}-temp.bin");
                             await using var stream = File.Create(checkpointFileName);
-                            _model.SaveCheckpoint(stream, epoch, epochLoss);
-                            UpdateJob(job.JobId, job => job.Checkpoint = checkpointFileName);
+                            model.SaveCheckpoint(stream, epoch, epochLoss);
+                            await UpdateJob(job.EntryId, job => job.CheckpointFilename = checkpointFileName);
                         }
                     }
                     else
                     {   // Number of sub batches here is 1.
                         // Shuffle standard mini-batches ONCE per epoch
                         var shuffledMiniBatches = Shuffle(miniBatches.ToList(), rng);
-                        UpdateJob(job.JobId, job =>
+                        await UpdateJob(job.EntryId, job =>
                         {
                             job.Message = $"Shuffling batches (epoch {epoch + 1}/{totalEpochs}).";
                             job.TotalBatches = shuffledMiniBatches.Count;
-                            job.NumSubBatches = 1;
+                            job.TotalSubBatches = 1;
                         });
                         for (int batch = 0; batch < numBatches; batch++)
                         {
                             var item = shuffledMiniBatches[batch];
-                            epochLoss += _model.TrainStep(item.Inputs, item.Targets);
+                            epochLoss += model.TrainStep(item.Inputs, item.Targets);
 
                             // Correct parenthesis grouping for modulus
                             if ((batch + 1) % 10 == 0 || batch == 0)
@@ -225,7 +244,7 @@ namespace SimpleTransformer.Api.Endpoints.Services
                     epochLoss /= miniBatches.Count;
 
                     Log.Information($"Epoch {epoch + 1}: Loss={epochLoss:F6}");
-                    UpdateJob(job.JobId, job =>
+                    await UpdateJob(job.EntryId, job =>
                     {
                         job.CurrentEpoch = epoch + 1;
                         job.CurrentBatch = numBatches;
@@ -240,11 +259,11 @@ namespace SimpleTransformer.Api.Endpoints.Services
                         string checkpointFileName = $"checkpoint-{epoch + 1}-loss-{epochLoss:F6}.bin";
                         
                         await using var stream = File.Create(checkpointFileName);
-                        _model.SaveCheckpoint(stream, epoch, epochLoss);
+                        model.SaveCheckpoint(stream, epoch, epochLoss);
                         
-                        UpdateJob(job.JobId, job =>
+                        await UpdateJob(job.EntryId, job =>
                         {
-                            job.Checkpoint = checkpointFileName;
+                            job.CheckpointFilename = checkpointFileName;
                             job.CurrentLoss = epochLoss;
                             job.Message =
                                 $"Epoch {epoch + 1} completed. Checkpoint saved.";
@@ -254,22 +273,22 @@ namespace SimpleTransformer.Api.Endpoints.Services
                 }
 
                 //End training normally
-                _model.EndTraining();
+                model.EndTraining();
             }
             finally
             {
                 //If something goes wrong, end training.
-                _model.EndTraining();
+                model.EndTraining();
             }
 
             //Update the job status
-            UpdateJob(job.JobId, job =>
+            await UpdateJob(job.EntryId, job =>
             {
                 job.Status = TrainingJobStatus.Completed;
                 job.CurrentEpoch = totalEpochs;
                 job.CurrentBatch = job.TotalBatches;
                 job.Message = "Model training completed successfully.";
-                job.CompletedAt = DateTime.UtcNow;
+                job.DateCompleted = DateTime.UtcNow;
             });
             return new ApiResponse<TrainingResponse>
             {
@@ -289,42 +308,116 @@ namespace SimpleTransformer.Api.Endpoints.Services
             var request = new TrainingRequest
             {
                 InputText = fileText,
-                Config = req.Config,
-                PreviousCheckpoint = req.PreviousCheckpoint
+                TransformerModelId = req.TransformerModelId,
+                VocabularyId = req.VocabularyId,
+
+                PreviousCheckpoint = req.PreviousCheckpoint,
+                PreviousCheckpointId = req.PreviousCheckpointId
+
             };
 
             return await TrainModelFromText(request);
         }
 
-        private void RegisterJob(TrainingJobEntry jobEntry)
+        public async Task<ApiResponse<TrainingProgressResponse>> PauseTrainingJob(Guid jobId)
         {
-            var job = _jobs.FirstOrDefault(x => x.JobId == jobEntry.JobId);
-            //If it exists, do nothing
-            if (job != null)
-                return;
-            //Else, add
-            else
-                _jobs.Add(jobEntry);
+            await using var db = await _dbFactory.CreateDbContextAsync();
+            var job = db.TrainingJobs.FirstOrDefault(x => x.EntryId == jobId);
+
+            if (job == null)
+                return new ApiResponse<TrainingProgressResponse>
+                {
+                    Message = "Training job not found.",
+                    Status = ResponseStatus.Failure,
+                    StatusCode = 404
+                };
+
+            job.Status = TrainingJobStatus.Paused;
+            return new ApiResponse<TrainingProgressResponse>
+            {
+                Message = "Training job paused successfully.",
+                Status = ResponseStatus.Success,
+                StatusCode = 200
+            };
         }
 
-        private void UpdateJob(Guid jobId, Action<TrainingJobEntry> update)
+        public async Task<ApiResponse<TrainingProgressResponse>> ResumeTrainingJob(Guid jobId)
         {
-            var jobEntry = _jobs.FirstOrDefault(x => x.JobId == jobId);
+            await using var db = await _dbFactory.CreateDbContextAsync();
+            var job = db.TrainingJobs.FirstOrDefault(x => x.EntryId == jobId);
+
+            if (job == null)
+                return new ApiResponse<TrainingProgressResponse>
+                {
+                    Message = "Training job not found.",
+                    Status = ResponseStatus.Failure,
+                    StatusCode = 404
+                };
+
+            job.Status = TrainingJobStatus.Running;
+            return new ApiResponse<TrainingProgressResponse>
+            {
+                Message = "Training job resumed successfully.",
+                Status = ResponseStatus.Success,
+                StatusCode = 200
+            };
+        }
+
+        public async Task<ApiResponse<TrainingProgressResponse>> CancelTrainingJob(Guid jobId)
+        {
+            await using var db = await _dbFactory.CreateDbContextAsync();
+            var job = db.TrainingJobs.FirstOrDefault(x => x.EntryId == jobId);
+
+            if (job == null)
+                return new ApiResponse<TrainingProgressResponse>
+                {
+                    Message = "Training job not found.",
+                    Status = ResponseStatus.Failure,
+                    StatusCode = 404
+                };
+
+            job.Status = TrainingJobStatus.Cancelled;
+            return new ApiResponse<TrainingProgressResponse>
+            {
+                Message = "Training job cancelled successfully.",
+                Status = ResponseStatus.Success,
+                StatusCode = 200
+            };
+        }
+
+        private async Task RegisterJob(TrainingJobEntry jobEntry)
+        {
+            await using var db = await _dbFactory.CreateDbContextAsync();
+
+            await db.TrainingJobs.AddAsync(jobEntry);
+            await db.SaveChangesAsync();
+        }
+
+        private async Task UpdateJob(
+            Guid jobId,
+            Action<TrainingJobEntry> update)
+        {
+            await using var db = await _dbFactory.CreateDbContextAsync();
+
+            var jobEntry = await db.TrainingJobs
+                .FirstOrDefaultAsync(x => x.EntryId == jobId);
 
             if (jobEntry == null)
                 return;
 
             update(jobEntry);
 
-            jobEntry.LastUpdatedAt = DateTime.UtcNow;
+            jobEntry.DateUpdated = DateTime.UtcNow;
+
+            await db.SaveChangesAsync();
         }
         
-        private IReadOnlyList<TrainingSample> CreateTrainingSamples(string src)
+        private IReadOnlyList<TrainingSample> CreateTrainingSamples(TransformerModel model, string src)
         {
             int[] tokens = _tokenizer.Encode(src);
             List<TrainingSample> data = new();
 
-            int window = _model.Config.MaxSequenceLength;
+            int window = model.Config.MaxSequenceLength;
             
             for (int i = 0; i <= tokens.Length - window - 1; i += window)
             {
@@ -343,13 +436,14 @@ namespace SimpleTransformer.Api.Endpoints.Services
             return data;
         }
 
-        public Task<ApiResponse<TrainingProgressResponse>> GetTrainingProgress(Guid jobId)
+        public async Task<ApiResponse<TrainingProgressResponse>> GetTrainingProgress(Guid jobId)
         {
-            var job = _jobs.FirstOrDefault(x => x.JobId == jobId);
+            await using var db = await _dbFactory.CreateDbContextAsync();
+            var job = db.TrainingJobs.FirstOrDefault(x => x.EntryId == jobId);
 
             if (job == null)
             {
-                return Task.FromResult(new ApiResponse<TrainingProgressResponse>
+                return await Task.FromResult(new ApiResponse<TrainingProgressResponse>
                 {
                     Message = "Training job not found.",
                     Status = ResponseStatus.Failure,
@@ -357,24 +451,24 @@ namespace SimpleTransformer.Api.Endpoints.Services
                 });
             }
 
-            return Task.FromResult(new ApiResponse<TrainingProgressResponse>
+            return await Task.FromResult(new ApiResponse<TrainingProgressResponse>
             {
                 Message = job.Message,
                 Status = ResponseStatus.Success,
                 StatusCode = 200,
                 Data = new TrainingProgressResponse
                 {
-                    JobId = job.JobId.ToString(),
+                    JobId = job.EntryId.ToString(),
                     Status = job.Status,
                     CurrentEpoch = job.CurrentEpoch,
                     TotalEpochs = job.TotalEpochs,
                     CurrentBatch = job.CurrentBatch,
                     TotalBatches = job.TotalBatches,
                     CurrentLoss = job.CurrentLoss,
-                    Checkpoint = job.Checkpoint,
-                    StartedAt = job.StartedAt,
-                    CompletedAt = job.CompletedAt,
-                    LastUpdatedAt = job.LastUpdatedAt,
+                    Checkpoint = job.CheckpointFilename,
+                    StartedAt = job.DateStarted,
+                    CompletedAt = job.DateCompleted,
+                    LastUpdatedAt = job.DateUpdated,
                     Error = job.Error ?? "none"
                 }
             });
@@ -382,35 +476,36 @@ namespace SimpleTransformer.Api.Endpoints.Services
 
         public async Task<ApiResponse<List<TrainingProgressResponse>>> GetTrainingJobs()
         {
+            await using var _db = await _dbFactory.CreateDbContextAsync();
             return new ApiResponse<List<TrainingProgressResponse>>
             {
                 Message = "Training jobs found.",
                 Status = ResponseStatus.Success,
                 StatusCode = 200,
-                Data = _jobs.Select(x => new TrainingProgressResponse
+                Data = _db.TrainingJobs.Select(x => new TrainingProgressResponse
                 {
-                    JobId = x.JobId.ToString(),
+                    JobId = x.EntryId.ToString(),
                     Status = x.Status,
                     CurrentEpoch = x.CurrentEpoch,
                     TotalEpochs = x.TotalEpochs,
                     CurrentBatch = x.CurrentBatch,
                     TotalBatches = x.TotalBatches,
                     CurrentLoss = x.CurrentLoss,
-                    Checkpoint = x.Checkpoint,
-                    StartedAt = x.StartedAt,
-                    CompletedAt = x.CompletedAt,
-                    LastUpdatedAt = x.LastUpdatedAt,
+                    Checkpoint = x.CheckpointFilename,
+                    StartedAt = x.DateStarted,
+                    CompletedAt = x.DateCompleted,
+                    LastUpdatedAt = x.DateUpdated,
                     Error = x.Error ?? "none"
                 }).ToList()
             };
         }
 
-        private IReadOnlyList<MiniBatch> CreateMiniBatches(IReadOnlyList<TrainingSample> samples)
+        private IReadOnlyList<MiniBatch> CreateMiniBatches(TransformerModel model, IReadOnlyList<TrainingSample> samples)
         {
             List<MiniBatch> miniBatches = new();
             
             // Read directly from the model's TrainingConfig
-            int batchSize = _model.TrainingConfig.BatchSize;
+            int batchSize = model.TrainingConfig.BatchSize;
 
             for (int start = 0; start < samples.Count; start += batchSize)
             {

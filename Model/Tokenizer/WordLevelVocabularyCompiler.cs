@@ -4,9 +4,9 @@ namespace SimpleTransformer.Model.Tokenizer
 {
     public class WordLevelVocabularyCompiler : IVocabularyCompiler
     {
-        public VocabularyCompilationResult BuildFromRawTextFile(string src, int targetVocabSize = 0)
+        public VocabularyCompilationResult BuildFromRawTextFile(string sourceDir, string filename, int targetVocabSize = 0)
         {
-            return BuildFromRawTextFiles(new[] { src }, targetVocabSize);
+            return BuildFromRawTextFiles(sourceDir, new[] { filename }, targetVocabSize);
         }
         private static readonly Dictionary<string, int> _specialTokens = new()
         {
@@ -16,30 +16,19 @@ namespace SimpleTransformer.Model.Tokenizer
             [SpecialTokens.EndOfSequence] = 3,
             [SpecialTokens.Mask] = 4,
         };
-        public static Vocabulary BuildFromRawTextFile(string src)
-        {
-            ValidateSourceFile(src);
 
-            var vocabulary = new Dictionary<string, int>(_specialTokens);
-            int nextId = vocabulary.Count;
-
-            string text = File.ReadAllText(src);
-
-            CompileTokens(text, vocabulary, ref nextId);
-
-            return new Vocabulary(vocabulary);
-        }
-
-        public VocabularyCompilationResult BuildFromRawTextFiles(IEnumerable<string> srcFiles, int targetVocabSize = 0)
+        public VocabularyCompilationResult BuildFromRawTextFiles(string sourceDirectory, IEnumerable<string> filenames, int targetVocabSize = 0)
         {
             var vocabulary = new Dictionary<string, int>(_specialTokens);
             int nextId = vocabulary.Count;
 
-            foreach (string file in srcFiles)
+            foreach (string filename in filenames)
             {
-                ValidateSourceFile(file);
+                var sourcePath = Path.Combine(sourceDirectory, filename);
+                
+                ValidateSourceFile(sourcePath);
 
-                string text = File.ReadAllText(file);
+                string text = File.ReadAllText(sourcePath);
 
                 CompileTokens(text, vocabulary, ref nextId);
             }
@@ -49,7 +38,7 @@ namespace SimpleTransformer.Model.Tokenizer
                 null);
         }
 
-       private static void CompileTokens(
+        private static void CompileTokens(
             string text,
             Dictionary<string, int> vocabulary,
             ref int nextId)

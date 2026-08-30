@@ -161,5 +161,12 @@ namespace SimpleTransformer.Model
             _keyProjection.ZeroGradients();
             _valueProjection.ZeroGradients();
         }
+
+        public void Dispose()
+        {
+            _queryProjection.Dispose();
+            _keyProjection.Dispose();
+            _valueProjection.Dispose();
+        }
     }
 }

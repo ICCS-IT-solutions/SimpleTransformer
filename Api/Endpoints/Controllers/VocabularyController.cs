@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Mvc;
 using SimpleTransformer.Api.Endpoints.Services;
 using SimpleTransformer.Api.Requests;
 using SimpleTransformer.Api.Responses;
+using SimpleTransformer.AppDb;
 using SimpleTransformer.Model;
 using SimpleTransformer.Model.Tokenizer;
 
@@ -40,6 +41,12 @@ namespace SimpleTransformer.Api.Endpoints.Controllers
             return await _vocabularyService.GetCurrentVocabularyProperties();
         }
 
+        [HttpGet("api/v1/vocabulary/available")]
+        public async Task<ApiResponse<AvailableVocabulariesResponse>> GetAvailableVocabularies()
+        {
+            return await _vocabularyService.GetAvailableVocabulariesAsync();
+        }
+
         [HttpPost("api/v1/vocabulary/upload")]
         public async Task<ApiResponse<VocabularyLoaderResponse>> UploadFiles(
             [FromForm] VocabularyUploadRequest req)
@@ -58,4 +65,10 @@ namespace SimpleTransformer.Api.Endpoints.Controllers
         public string? Name { get; set; }
         public float FileSize { get; set; }
     } 
+
+    public class AvailableVocabulariesResponse
+    {
+        public List<VocabularyEntry> Vocabularies { get; set; } = [];
+        public bool IsLoaded { get; set; }
+    }
 }   

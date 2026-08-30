@@ -333,5 +333,7 @@ namespace SimpleTransformer.Model
                 _lastInvStdCount = 0;
             }
         }
+
+        public void Dispose() => ClearState();
     }
 }

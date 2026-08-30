@@ -3,6 +3,7 @@ namespace SimpleTransformer.Api.Requests
     public class InferenceRequest
     {
         public required string InputText { get; set; }
+        public required Guid TransformerModelId { get; set; }
         public GenerationParameters GenerationParameters { get; set; } = new GenerationParameters();
     }
 

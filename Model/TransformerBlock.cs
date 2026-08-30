@@ -205,5 +205,13 @@ namespace SimpleTransformer.Model
             _layerNorm1.ZeroGradients();
             _layerNorm2.ZeroGradients();
         }
+
+        public void Dispose()
+        {
+            _multiHeadAttention.Dispose();
+            _feedForward.Dispose();
+            _layerNorm1.Dispose();
+            _layerNorm2.Dispose();
+        }
     }
 }

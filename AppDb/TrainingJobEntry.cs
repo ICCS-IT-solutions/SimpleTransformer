@@ -1,22 +1,27 @@
+using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations.Schema;
 using SimpleTransformer.Api.Responses;
 
 namespace SimpleTransformer.AppDb
 {
     public class TrainingJobEntry
     {
+        [Key]
         public Guid EntryId { get; set; } = Guid.NewGuid();
         public required string Name { get; set; }
+        public string Message { get; set; } = string.Empty;
         //Associated model, training and vocabulary
         public Guid TransformerConfigId { get; set; }
         public Guid TrainingConfigId { get; set; }
         public Guid VocabularyId { get; set; }
 
-
+        //Associated model, training and vocabulary
         public TransformerConfigEntry? TransformerConfig { get; set; }
         public TrainingConfigEntry? TrainingConfig { get; set; }
         public VocabularyEntry? Vocabulary { get; set; }        
 
         public DateTime DateCreated { get; set; } = DateTime.UtcNow;
+        public DateTime DateUpdated { get; set; }
         public DateTime? DateStarted { get; set; }
         public DateTime? DateCompleted { get; set; }
 
@@ -41,6 +46,9 @@ namespace SimpleTransformer.AppDb
 
         // Latest checkpoint
         public Guid? TrainingCheckpointId { get; set; }
+        public string CheckpointFilename { get; set; } = string.Empty;
         public TrainingCheckpointEntry? TrainingCheckpoint { get; set; }
+        //Other properties and statuses
+        public string Error { get; set; } = string.Empty;
     }
 }

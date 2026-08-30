@@ -16,11 +16,25 @@ namespace SimpleTransformer.AppDb
         public DbSet<VocabularyEntry> Vocabularies { get; set; } = null!;
         public DbSet<TrainingConfigPresetEntry> TrainingConfigPresets { get; set; } = null!;
         public DbSet<TransformerConfigPresetEntry> TransformerConfigPresets { get; set; } = null!;
+        public DbSet<TransformerModelEntry> TransformerModels { get; set; } = null!;
         public DbSet<TrainingJobEntry> TrainingJobs { get; set; } = null!;
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
             base.OnModelCreating(modelBuilder);
+
+            modelBuilder.Ignore<TrainingConfig>();
+            modelBuilder.Ignore<TransformerConfig>();
+
+            //Primary keys per table point to EntryId
+            modelBuilder.Entity<TrainingConfigEntry>().HasKey(x => x.EntryId);
+            modelBuilder.Entity<TransformerConfigEntry>().HasKey(x => x.EntryId);
+            modelBuilder.Entity<TrainingCheckpointEntry>().HasKey(x => x.EntryId);
+            modelBuilder.Entity<VocabularyEntry>().HasKey(x => x.EntryId);
+            modelBuilder.Entity<TrainingConfigPresetEntry>().HasKey(x => x.EntryId);
+            modelBuilder.Entity<TransformerConfigPresetEntry>().HasKey(x => x.EntryId);
+            modelBuilder.Entity<TransformerModelEntry>().HasKey(x => x.EntryId);
+            modelBuilder.Entity<TrainingJobEntry>().HasKey(x => x.EntryId);
 
             // ---------------------------------------------------------------------
             // Training configuration
@@ -49,7 +63,20 @@ namespace SimpleTransformer.AppDb
             modelBuilder.Entity<TransformerConfigPresetEntry>()
                 .HasIndex(x => x.Name)
                 .IsUnique();
+                
+            // ---------------------------------------------------------------------
+            // Transformer models
+            // ---------------------------------------------------------------------
 
+            modelBuilder.Entity<TransformerModelEntry>()
+                .HasIndex(x => x.Name)
+                .IsUnique();
+
+            modelBuilder.Entity<TransformerModelEntry>()
+                .HasIndex(x => x.TransformerConfigId);
+
+            modelBuilder.Entity<TransformerModelEntry>()
+                .HasIndex(x => x.TrainingConfigId);
             // ---------------------------------------------------------------------
             // Training jobs
             // ---------------------------------------------------------------------
@@ -97,6 +124,7 @@ namespace SimpleTransformer.AppDb
                 .WithMany()
                 .HasForeignKey(x => x.TrainingCheckpointId)
                 .OnDelete(DeleteBehavior.SetNull);
+
         }
     }
 }

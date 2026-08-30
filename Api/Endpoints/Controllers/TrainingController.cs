@@ -34,36 +34,6 @@ namespace SimpleTransformer.Api.Endpoints.Controllers
         [HttpPost("api/v1/train/file")]
         public async Task<ApiResponse<TrainingResponse>> TrainFromFile([FromForm] TrainingFileRequest req)
         {
-            TrainingConfig config;
-
-            if (string.IsNullOrWhiteSpace(req.Config))
-            {
-                config = TrainingConfig.DefaultAdamWConfig;
-            }
-            else
-            {
-                var rawConfigJson = req.Config;
-                Console.WriteLine(rawConfigJson);
-
-                var configJson = JsonDocument.Parse(rawConfigJson);
-                foreach (var prop in configJson.RootElement.EnumerateObject())
-                {
-                    Console.WriteLine($"{prop.Name}: {prop.Value}");
-                }
-                
-                config = JsonSerializer.Deserialize<TrainingConfig>(req.Config)
-                    ?? TrainingConfig.DefaultAdamWConfig;
-            }
-
-            if (config == null)
-            {
-                return new ApiResponse<TrainingResponse>
-                {
-                    Status = ResponseStatus.Failure,
-                    StatusCode = 400,
-                    Message = "Invalid training configuration."
-                };
-            }
             return await _trainingService.TrainModelFromTextFile(req);
         }
 
@@ -78,6 +48,25 @@ namespace SimpleTransformer.Api.Endpoints.Controllers
         public async Task<ApiResponse<List<TrainingProgressResponse>>> GetTrainingJobs()
         {
             return await _trainingService.GetTrainingJobs();
+        }
+
+        //Pause, resume and cancel jobs
+        [HttpPost("api/v1/train/jobs/{jobId}/pause")]
+        public async Task<ApiResponse<TrainingProgressResponse>> PauseTrainingJob(Guid jobId)
+        {
+            return await _trainingService.PauseTrainingJob(jobId);
+        }
+
+        [HttpPost("api/v1/train/jobs/{jobId}/resume")]
+        public async Task<ApiResponse<TrainingProgressResponse>> ResumeTrainingJob(Guid jobId)
+        {
+            return await _trainingService.ResumeTrainingJob(jobId);
+        }
+
+        [HttpPost("api/v1/train/jobs/{jobId}/cancel")]
+        public async Task<ApiResponse<TrainingProgressResponse>> CancelTrainingJob(Guid jobId)
+        {
+            return await _trainingService.CancelTrainingJob(jobId);
         }
     }
 }

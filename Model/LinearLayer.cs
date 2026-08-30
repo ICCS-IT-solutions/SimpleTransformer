@@ -298,6 +298,11 @@ namespace SimpleTransformer.Model
                 TensorMathSimd.AddSpanInPlace(biasGradSpan, rowSpan);
             }
         }
+        public void Dispose()
+        {
+            _weightGradient.Dispose();
+            _biasGradient?.Dispose();
+        }
 
         #endregion
     }

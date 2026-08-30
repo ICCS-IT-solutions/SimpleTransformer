@@ -163,5 +163,11 @@ namespace SimpleTransformer.Model
             _expand.ZeroGradients();
             _project.ZeroGradients();
         }
+
+        public void Dispose()
+        {
+            _expand.Dispose();
+            _project.Dispose();
+        }
     }
 }

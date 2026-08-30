@@ -4,7 +4,7 @@ using SimpleTransformer.Model.Extensions.Numerics;
 
 namespace SimpleTransformer.Model
 {
-    public class PositionalEncodingLayer : ILayer
+    public class PositionalEncodingLayer : ILayer, IDisposable
     {
         public string Name { get; }
         private readonly int _embeddingSize;
@@ -95,6 +95,11 @@ namespace SimpleTransformer.Model
         public void ClearState()
         {
             _lastInput = null;
+        }
+
+        public void Dispose()
+        {
+            _encoding.Dispose();
         }
     }
 }
