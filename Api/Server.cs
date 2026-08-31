@@ -7,6 +7,7 @@ using SimpleTransformer.AppDb;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Design;
 using SimpleTransformer.Api.Endpoints.Factories;
+using SimpleTransformer.Api.ModelManagement;
 
 namespace SimpleTransformer.Api
 {
@@ -85,12 +86,16 @@ namespace SimpleTransformer.Api
                     var vocab = provider.GetRequiredService<Vocabulary>();
                     return new SentencePieceTokenizer(vocab);
                 });
+
+                builder.Services.AddSingleton<ModelManager>();
                 
                 //Services using the model should be created after the model is ready.
                 builder.Services.AddSingleton<TrainingService>();
                 builder.Services.AddSingleton<InferenceService>();
                 builder.Services.AddSingleton<TransformerModelService>();
                 builder.Services.AddSingleton<ConfigService>();
+
+                
 
                 var app = builder.Build();
 

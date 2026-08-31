@@ -43,7 +43,7 @@ namespace SimpleTransformer.Api.Endpoints.Factories
                 throw new InvalidOperationException($"Training config with id {model.TrainingConfigId} not found in database.");
             }
 
-            return new TransformerModel(transformerConfig.Config, trainingConfig.Config);
+            return new TransformerModel(modelId, transformerConfig.Config, trainingConfig.Config);
         }
     }
 }

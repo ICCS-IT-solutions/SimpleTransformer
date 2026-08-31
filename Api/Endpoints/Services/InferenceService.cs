@@ -1,5 +1,7 @@
 using System.Text;
+using Microsoft.EntityFrameworkCore;
 using SimpleTransformer.Api.Endpoints.Factories;
+using SimpleTransformer.Api.ModelManagement;
 using SimpleTransformer.Api.Requests;
 using SimpleTransformer.Api.Responses;
 using SimpleTransformer.AppDb;
@@ -12,22 +14,64 @@ namespace SimpleTransformer.Api.Endpoints.Services
 {
     public class InferenceService
     {
-        private readonly AppDbContext _db;
+        private readonly IDbContextFactory<AppDbContext> _dbFactory;
         private readonly ITransformerModelFactory _modelFactory;
         private readonly ConfigManager _configManager;
         private readonly ITokenizer _tokenizer;
+        private readonly ModelManager _modelManager;
 
-        public InferenceService(ITokenizer tokenizer, ConfigManager configManager, AppDbContext db, ITransformerModelFactory modelFactory)
+        public InferenceService(
+            ITokenizer tokenizer, 
+            ConfigManager configManager, 
+            IDbContextFactory<AppDbContext> dbFactory, 
+            ITransformerModelFactory modelFactory,
+            ModelManager modelManager)
         {
             _tokenizer = tokenizer;
             _configManager = configManager;
             _modelFactory = modelFactory;
-            _db = db;
+            _dbFactory = dbFactory;
+            _modelManager = modelManager;
         }
 
         public async Task<ApiResponse<InferenceResponse>> Infer(InferenceRequest req)
         {
-            using var model = await _modelFactory.CreateModelAsync(req.TransformerModelId);
+            using var db = await _dbFactory.CreateDbContextAsync();
+            var modelEntry = db.TransformerModels.FirstOrDefault(x => x.EntryId == req.TransformerModelId);
+
+            if (modelEntry == null)
+            {
+                return new ApiResponse<InferenceResponse>
+                {
+                    Message = "Model not found.",
+                    Status = ResponseStatus.Error,
+                    StatusCode = 404
+                };
+            }
+
+            if (modelEntry.IsLoaded == false)
+            {
+                return new ApiResponse<InferenceResponse>
+                {
+                    Message = "Model not loaded.",
+                    Status = ResponseStatus.Error,
+                    StatusCode = 404
+                };
+            }
+
+            //Only once the model entry has been found, can I create the model
+            
+            var model = await _modelManager.LoadModelAsync(modelEntry.EntryId);
+
+            if(model == null)
+            {
+                return new ApiResponse<InferenceResponse>
+                {
+                    Message = "Model not found.",
+                    Status = ResponseStatus.Error,
+                    StatusCode = 404
+                };
+            }
             //Now I can block inference if training is underway.
             if(model.IsTraining == true)
             {

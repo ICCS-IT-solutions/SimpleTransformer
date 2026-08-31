@@ -1,7 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
 using SimpleTransformer.Api.Endpoints.Services;
 using SimpleTransformer.Api.Responses;
-using SimpleTransformer.AppDb;
 using SimpleTransformer.Model;
 
 namespace SimpleTransformer.Api.Endpoints.Controllers
@@ -33,14 +32,19 @@ namespace SimpleTransformer.Api.Endpoints.Controllers
         {
             return await _transformerModelService.GetModels();
         }
-    }
 
-    public class CreateTransformerModelRequest
-    {
-        public required string Name { get; set; }
-        public required string Description { get; set; }
-        public required TransformerConfigEntry TransformerConfig { get; set; }
-        public required TrainingConfigEntry TrainingConfig { get; set; }
+        [HttpPost("api/v1/models/{modelId}/load")]
+        public async Task<ApiResponse<TransformerModelResponse>> LoadModel([FromRoute] Guid modelId)
+        {
+            return await _transformerModelService.LoadModel(modelId);
+        }
+
+        //Whether I will need this endpoint, I don't yet know, but it does help for testing to see if the backend can trigger a model load from a GUID.
+        [HttpPost("api/v1/models/{modelId}/create-runtime-model")]
+        public async Task<ApiResponse<TransformerModel?>> CreateRuntimeModel([FromRoute] Guid modelId)
+        {
+            return await _transformerModelService.CreateRuntimeModel(modelId);
+        }
     }
 
     /*

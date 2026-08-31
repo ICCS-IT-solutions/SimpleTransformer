@@ -105,5 +105,54 @@ namespace SimpleTransformer.Api.Endpoints.Services
                 }
             };
         }
+
+        public async Task<ApiResponse<TransformerModelResponse>> LoadModel(Guid modelId)
+        {
+            using var db = await _dbFactory.CreateDbContextAsync();
+            var model = await db.TransformerModels.FirstOrDefaultAsync(x => x.EntryId == modelId);
+
+            if (model == null)
+            {
+                return new ApiResponse<TransformerModelResponse>()
+                {
+                    Message = "Model not found in database.",
+                    Status = ResponseStatus.Failure,
+                    StatusCode = 404
+                };
+            }
+
+            if (model.IsLoaded)
+            {
+                return new ApiResponse<TransformerModelResponse>()
+                {
+                    Message = "Model already loaded.",
+                    Status = ResponseStatus.Failure,
+                    StatusCode = 400
+                };
+            }
+            //If another model is loaded, unload it
+            var otherModel = await db.TransformerModels.FirstOrDefaultAsync(x => x.IsLoaded == true && x.EntryId != model.EntryId);
+            if (otherModel != null)
+            {
+                otherModel.IsLoaded = false;
+            }
+
+            model.IsLoaded = true;
+
+            await db.SaveChangesAsync();
+
+            return new ApiResponse<TransformerModelResponse>()
+            {
+                Message = "Model loaded successfully.",
+                Status = ResponseStatus.Success,
+                StatusCode = 200,
+                Data = new TransformerModelResponse
+                {
+                    Message = "Model loaded successfully.",
+                    Status = InteractionStatus.Success,
+                    Model = model
+                }
+            };
+        }
     }
 }

@@ -3,6 +3,7 @@ using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Serilog;
 using SimpleTransformer.Api.Endpoints.Factories;
+using SimpleTransformer.Api.ModelManagement;
 using SimpleTransformer.Api.Requests;
 using SimpleTransformer.Api.Responses;
 using SimpleTransformer.AppDb;
@@ -18,13 +19,20 @@ namespace SimpleTransformer.Api.Endpoints.Services
         private readonly ITransformerModelFactory _transformerModelFactory;
         private readonly ConfigManager _configManager;
         private readonly ITokenizer _tokenizer;
+        private ModelManager _modelManager;
 
-        public TrainingService(ITokenizer tokenizer, ConfigManager configManager, IDbContextFactory<AppDbContext> dbFactory, ITransformerModelFactory transformerModelFactory)
+        public TrainingService(
+            ITokenizer tokenizer, 
+            ConfigManager configManager, 
+            IDbContextFactory<AppDbContext> dbFactory, 
+            ITransformerModelFactory transformerModelFactory, 
+            ModelManager modelManager)
         {
             _tokenizer = tokenizer;
             _configManager = configManager;
             _dbFactory = dbFactory;
             _transformerModelFactory = transformerModelFactory;
+            _modelManager = modelManager;
         }
 
         public async Task<ApiResponse<TrainingResponse>> TrainModelFromText(TrainingRequest req)
@@ -42,7 +50,19 @@ namespace SimpleTransformer.Api.Endpoints.Services
                 };
             }
 
-            using var model = await _transformerModelFactory.CreateModelAsync(req.TransformerModelId);
+            //If the model is not loaded, training can't be done
+            if (!modelEntry.IsLoaded)
+            {
+                return new ApiResponse<TrainingResponse>
+                {
+                    Message = "Model not loaded.",
+                    Status = ResponseStatus.Failure,
+                    StatusCode = 400
+                };
+            }
+
+            var model = await _modelManager.LoadModelAsync(modelEntry.EntryId);
+            
             if (string.IsNullOrEmpty(req.InputText))
             {
                 return new ApiResponse<TrainingResponse>

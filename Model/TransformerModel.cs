@@ -11,6 +11,7 @@ namespace SimpleTransformer.Model
     //Future work: Implement batched training and gradient clipping by norm.
     public class TransformerModel : IDisposable
     {
+        public Guid TransformerModelId { get; private set; }
         //These don't yet exist, but are created when the constructor calls BuildModel(). 
         private EmbeddingLayer _embedding = null!;
         private ILinearLayer _outputProjection = null!;
@@ -89,8 +90,9 @@ namespace SimpleTransformer.Model
         private readonly List<ILayer> _layers = new();
         public TransformerConfig Config { get; }
         public TrainingConfig TrainingConfig { get; }
-        public TransformerModel(TransformerConfig? config = null, TrainingConfig? trainingConfig = null)
+        public TransformerModel(Guid modelId, TransformerConfig? config = null, TrainingConfig? trainingConfig = null)
         {
+            TransformerModelId = modelId;
             Config = config ?? DefaultConfig;
             TrainingConfig = trainingConfig ?? new TrainingConfig();
             //Second pass configuration validation to ensure nothing accidentally slips through first-pass validation in the config class.
@@ -98,7 +100,7 @@ namespace SimpleTransformer.Model
             Log.Information("Configuration is valid. Proceeding...");
 
             BuildModel(useQLora: true);
-            Log.Information("Transformer model ready to be loaded.");
+            Log.Information($"Transformer model {modelId} ready to be loaded.");
         }
 
         public void BeginTraining() => _isTraining = true;
@@ -210,7 +212,11 @@ namespace SimpleTransformer.Model
             
             // Fixed 4-byte header (no length prefix)
             writer.Write("STCK"u8); 
-            writer.Write(1); // Schema version
+            writer.Write(2); // Schema version
+
+            //Add the transformer model id to the checkpoint file 
+            writer.Write(TransformerModelId.ToByteArray());
+
             writer.Write(currentEpoch);
             writer.Write(currentLoss);
 
@@ -263,51 +269,112 @@ namespace SimpleTransformer.Model
         /// <summary>
         /// Static factory method to instantiate and hydrate a TransformerModel directly from a checkpoint stream.
         /// </summary>
-        public static (int Epoch, float Loss) LoadCheckpoint(Stream sourceStream, TransformerModel model)
+        public static (int Epoch, float Loss) LoadCheckpoint(
+            Stream sourceStream,
+            TransformerModel model)
         {
-            using var reader = new BinaryReader(sourceStream, Encoding.UTF8, leaveOpen: true);
+            using var reader = new BinaryReader(
+                sourceStream,
+                Encoding.UTF8,
+                leaveOpen: true);
 
-            // Read fixed 4-byte header directly
+            // ------------------------------------------------------------
+            // 1. Validate checkpoint header
+            // ------------------------------------------------------------
+
             byte[] magicBytes = reader.ReadBytes(4);
             string magic = Encoding.UTF8.GetString(magicBytes);
 
             if (magic != "STCK")
-                throw new InvalidDataException($"Invalid checkpoint file magic header: '{magic}'. Expected 'STCK'.");
+            {
+                throw new InvalidDataException(
+                    $"Invalid checkpoint file magic header: '{magic}'. Expected 'STCK'.");
+            }
 
             int version = reader.ReadInt32();
+
             if (version != 1)
-                throw new InvalidDataException($"Unsupported checkpoint schema version: {version}. Expected 1.");
+            {
+                throw new InvalidDataException(
+                    $"Unsupported checkpoint schema version: {version}. Expected 1.");
+            }
+            //Validate the checkpoint model id against the loaded model
+
+            Guid checkpointModelId =
+                new Guid(reader.ReadBytes(16));
+
+            if (checkpointModelId != model.TransformerModelId)
+            {
+                throw new InvalidDataException(
+                    $"Checkpoint belongs to model {checkpointModelId}, " +
+                    $"but was loaded into model {model.TransformerModelId}.");
+            }
 
             int epoch = reader.ReadInt32();
             float loss = reader.ReadSingle();
 
-            var config = CheckpointConfigExtensions.ReadConfig(reader);
-            model = new TransformerModel(config);
+            // ------------------------------------------------------------
+            // 2. Read checkpoint configuration
+            // ------------------------------------------------------------
+
+            var checkpointConfig =
+                CheckpointConfigExtensions.ReadConfig(reader);
+
+            // ------------------------------------------------------------
+            // 3. Validate checkpoint against the existing model
+            // ------------------------------------------------------------
+
+            ValidateCheckpointConfig(model.Config, checkpointConfig);
+
+            // ------------------------------------------------------------
+            // 4. Read parameter data
+            // ------------------------------------------------------------
 
             int paramCount = reader.ReadInt32();
-            var loadedParameters = new List<TrainableParameterCheckpoint>(paramCount);
+
+            if (paramCount <= 0)
+            {
+                throw new InvalidDataException(
+                    $"Checkpoint contains an invalid parameter count: {paramCount}.");
+            }
+
+            var loadedParameters =
+                new List<TrainableParameterCheckpoint>(paramCount);
 
             for (int i = 0; i < paramCount; i++)
             {
-                // 1. Read Parameter Name (matches SaveCheckpoint sequence)
                 string name = reader.ReadString();
 
-                // 2. Read Value Tensor
-                var val = ReadTensorOptimized(reader);
+                var value = ReadTensorOptimized(reader);
 
-                // 3. Read Gradient Tensor if present
-                bool hasGrad = reader.ReadBoolean();
-                TensorData? grad = hasGrad ? ReadTensorOptimized(reader) : null;
+                bool hasGradient = reader.ReadBoolean();
 
-                loadedParameters.Add(new TrainableParameterCheckpoint 
-                { 
-                    Name = name, 
-                    Value = val, 
-                    Gradient = grad 
-                });
+                TensorData? gradient =
+                    hasGradient
+                        ? ReadTensorOptimized(reader)
+                        : null;
+
+                loadedParameters.Add(
+                    new TrainableParameterCheckpoint
+                    {
+                        Name = name,
+                        Value = value,
+                        Gradient = gradient
+                    });
             }
 
+            // ------------------------------------------------------------
+            // 5. Hydrate the existing runtime model
+            // ------------------------------------------------------------
+
             model.LoadCheckpointData(loadedParameters);
+
+            Log.Information(
+                "Checkpoint successfully loaded into model {ModelId}. Epoch: {Epoch}, Loss: {Loss}.",
+                model.TransformerModelId,
+                epoch,
+                loss);
+
             return (epoch, loss);
         }       
 
@@ -534,6 +601,53 @@ namespace SimpleTransformer.Model
                 throw new ArgumentException(
                     "Embedding size must be divisible by the number of heads.");
         }
+
+        private static void ValidateCheckpointConfig(
+            TransformerConfig modelConfig,
+            TransformerConfig checkpointConfig)
+        {
+            if (modelConfig.VocabSize != checkpointConfig.VocabSize)
+            {
+                throw new InvalidDataException(
+                    $"Checkpoint vocabulary size ({checkpointConfig.VocabSize}) " +
+                    $"does not match model vocabulary size ({modelConfig.VocabSize}).");
+            }
+
+            if (modelConfig.EmbeddingSize != checkpointConfig.EmbeddingSize)
+            {
+                throw new InvalidDataException(
+                    $"Checkpoint embedding size ({checkpointConfig.EmbeddingSize}) " +
+                    $"does not match model embedding size ({modelConfig.EmbeddingSize}).");
+            }
+
+            if (modelConfig.NumLayers != checkpointConfig.NumLayers)
+            {
+                throw new InvalidDataException(
+                    $"Checkpoint layer count ({checkpointConfig.NumLayers}) " +
+                    $"does not match model layer count ({modelConfig.NumLayers}).");
+            }
+
+            if (modelConfig.NumHeads != checkpointConfig.NumHeads)
+            {
+                throw new InvalidDataException(
+                    $"Checkpoint head count ({checkpointConfig.NumHeads}) " +
+                    $"does not match model head count ({modelConfig.NumHeads}).");
+            }
+
+            if (modelConfig.FeedForwardSize != checkpointConfig.FeedForwardSize)
+            {
+                throw new InvalidDataException(
+                    $"Checkpoint feed-forward size ({checkpointConfig.FeedForwardSize}) " +
+                    $"does not match model feed-forward size ({modelConfig.FeedForwardSize}).");
+            }
+
+            if (modelConfig.MaxSequenceLength != checkpointConfig.MaxSequenceLength)
+            {
+                throw new InvalidDataException(
+                    $"Checkpoint maximum sequence length ({checkpointConfig.MaxSequenceLength}) " +
+                    $"does not match model maximum sequence length ({modelConfig.MaxSequenceLength}).");
+            }
+        }        
         private void BuildModel(bool useQLora = false)
         {
             // 1. Root-level layers with clean, standard names
