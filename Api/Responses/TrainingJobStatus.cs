@@ -4,6 +4,7 @@ namespace SimpleTransformer.Api.Responses
     {
         Pending,
         Started,
+        Stopped,
         Paused,
         Running,
         Completed,

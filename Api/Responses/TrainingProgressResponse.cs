@@ -3,6 +3,7 @@ namespace SimpleTransformer.Api.Responses
     public class TrainingProgressResponse
     {
         public string JobId { get; set; } = string.Empty;
+        public string Name { get; set; } = string.Empty;
         public TrainingJobStatus Status { get; set; }
         public int CurrentEpoch { get; set; }
         public int TotalEpochs { get; set; }

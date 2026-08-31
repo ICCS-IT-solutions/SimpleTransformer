@@ -1,7 +1,7 @@
 using System.Text;
 using Microsoft.EntityFrameworkCore;
 using SimpleTransformer.Api.Endpoints.Factories;
-using SimpleTransformer.Api.ModelManagement;
+using SimpleTransformer.Api.ManagementEngine;
 using SimpleTransformer.Api.Requests;
 using SimpleTransformer.Api.Responses;
 using SimpleTransformer.AppDb;
@@ -15,7 +15,6 @@ namespace SimpleTransformer.Api.Endpoints.Services
     public class InferenceService
     {
         private readonly IDbContextFactory<AppDbContext> _dbFactory;
-        private readonly ITransformerModelFactory _modelFactory;
         private readonly ConfigManager _configManager;
         private readonly ITokenizer _tokenizer;
         private readonly ModelManager _modelManager;
@@ -24,12 +23,10 @@ namespace SimpleTransformer.Api.Endpoints.Services
             ITokenizer tokenizer, 
             ConfigManager configManager, 
             IDbContextFactory<AppDbContext> dbFactory, 
-            ITransformerModelFactory modelFactory,
             ModelManager modelManager)
         {
             _tokenizer = tokenizer;
             _configManager = configManager;
-            _modelFactory = modelFactory;
             _dbFactory = dbFactory;
             _modelManager = modelManager;
         }
@@ -60,7 +57,7 @@ namespace SimpleTransformer.Api.Endpoints.Services
             }
 
             //Only once the model entry has been found, can I create the model
-            
+
             var model = await _modelManager.LoadModelAsync(modelEntry.EntryId);
 
             if(model == null)

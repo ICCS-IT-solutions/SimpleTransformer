@@ -20,7 +20,7 @@ namespace SimpleTransformer.Api.Endpoints.Controllers
             _trainingService = trainingService;
         }
         [HttpPost("api/v1/train/live")]
-        public async Task<ApiResponse<TrainingResponse>> TrainFromLiveInput([FromBody] TrainingRequest req)
+        public async Task<ApiResponse<TrainingResponse>> CreateJob([FromBody] TrainingRequest req)
         { 
             //Can one create temporary files in memory and pass them to the training service? I think so, but for now, let's just pass the text directly.
             var tempFilePath = Path.GetTempFileName();
@@ -28,13 +28,13 @@ namespace SimpleTransformer.Api.Endpoints.Controllers
             {
                 await writer.WriteAsync(req.InputText);
             }
-            return await _trainingService.TrainModelFromText(req);
+            return await _trainingService.CreateJob(req);
         }
 
         [HttpPost("api/v1/train/file")]
-        public async Task<ApiResponse<TrainingResponse>> TrainFromFile([FromForm] TrainingFileRequest req)
+        public async Task<ApiResponse<TrainingResponse>> CreateJobFromFile([FromForm] TrainingFileRequest req)
         {
-            return await _trainingService.TrainModelFromTextFile(req);
+            return await _trainingService.CreateJobFromFile(req);
         }
 
         //This may come in as a string, so if it does, I need to parse it as a guid.
@@ -67,6 +67,30 @@ namespace SimpleTransformer.Api.Endpoints.Controllers
         public async Task<ApiResponse<TrainingProgressResponse>> CancelTrainingJob(Guid jobId)
         {
             return await _trainingService.CancelTrainingJob(jobId);
+        }
+
+        [HttpPost("api/v1/train/jobs/{jobId}/stop")]
+        public async Task<ApiResponse<TrainingProgressResponse>> StopTrainingJob(Guid jobId)
+        {
+            return await _trainingService.StopTrainingJob(jobId);
+        }
+
+        [HttpPost("api/v1/train/jobs/{jobId}/delete")]
+        public async Task<ApiResponse<TrainingProgressResponse>> DeleteTrainingJob(Guid jobId)
+        {
+            return await _trainingService.DeleteTrainingJob(jobId);
+        }
+
+        [HttpPost("api/v1/train/jobs/{jobId}/reset")]
+        public async Task<ApiResponse<TrainingProgressResponse>> ResetTrainingJob(Guid jobId)
+        {
+            return await _trainingService.ResetTrainingJob(jobId);
+        }
+
+        [HttpPost("api/v1/train/jobs/{jobId}/start")]
+        public async Task<ApiResponse<TrainingProgressResponse>> StartTrainingJob(Guid jobId)
+        {
+            return await _trainingService.StartTrainingJob(jobId);
         }
     }
 }

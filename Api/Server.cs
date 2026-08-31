@@ -7,7 +7,7 @@ using SimpleTransformer.AppDb;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Design;
 using SimpleTransformer.Api.Endpoints.Factories;
-using SimpleTransformer.Api.ModelManagement;
+using SimpleTransformer.Api.ManagementEngine;
 
 namespace SimpleTransformer.Api
 {
@@ -88,6 +88,7 @@ namespace SimpleTransformer.Api
                 });
 
                 builder.Services.AddSingleton<ModelManager>();
+                builder.Services.AddSingleton<TrainingJobManager>();
                 
                 //Services using the model should be created after the model is ready.
                 builder.Services.AddSingleton<TrainingService>();

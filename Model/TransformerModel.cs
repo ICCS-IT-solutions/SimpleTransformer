@@ -90,7 +90,7 @@ namespace SimpleTransformer.Model
         private readonly List<ILayer> _layers = new();
         public TransformerConfig Config { get; }
         public TrainingConfig TrainingConfig { get; }
-        public TransformerModel(Guid modelId, TransformerConfig? config = null, TrainingConfig? trainingConfig = null)
+        public TransformerModel(Guid modelId, TransformerConfig? config = null, TrainingConfig? trainingConfig = null, bool useQLora = true)
         {
             TransformerModelId = modelId;
             Config = config ?? DefaultConfig;
@@ -99,8 +99,8 @@ namespace SimpleTransformer.Model
             ValidateConfig();
             Log.Information("Configuration is valid. Proceeding...");
 
-            BuildModel(useQLora: true);
-            Log.Information($"Transformer model {modelId} ready to be loaded.");
+            BuildModel(useQLora);
+            Log.Information($"Transformer model {modelId} ready to be loaded. Use Quantised LoRA: {useQLora}.");
         }
 
         public void BeginTraining() => _isTraining = true;
@@ -293,10 +293,10 @@ namespace SimpleTransformer.Model
 
             int version = reader.ReadInt32();
 
-            if (version != 1)
+            if (version != 2)
             {
                 throw new InvalidDataException(
-                    $"Unsupported checkpoint schema version: {version}. Expected 1.");
+                    $"Unsupported checkpoint schema version: {version}. Expected 2.");
             }
             //Validate the checkpoint model id against the loaded model
 

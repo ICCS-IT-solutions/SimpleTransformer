@@ -1,7 +1,7 @@
 using SimpleTransformer.Api.Endpoints.Factories;
 using SimpleTransformer.Model;
 
-namespace SimpleTransformer.Api.ModelManagement
+namespace SimpleTransformer.Api.ManagementEngine
 {
     public class ModelManager
     {
@@ -26,7 +26,7 @@ namespace SimpleTransformer.Api.ModelManagement
             }
 
             // Construct the new model first.
-            var model = await _modelFactory.CreateModelAsync(modelId);
+            var model = await _modelFactory.CreateModelAsync(modelId, useQLora: true);
 
             if (model == null)
             {

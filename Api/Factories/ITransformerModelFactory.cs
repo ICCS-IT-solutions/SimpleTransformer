@@ -6,7 +6,7 @@ namespace SimpleTransformer.Api.Endpoints.Factories
 {
     public interface ITransformerModelFactory
     {
-        Task<TransformerModel> CreateModelAsync(Guid modelId);
+        Task<TransformerModel> CreateModelAsync(Guid modelId, bool useQLora = true);
     }
 
     public class TransformerModelFactory : ITransformerModelFactory
@@ -17,7 +17,7 @@ namespace SimpleTransformer.Api.Endpoints.Factories
             _dbFactory = dbFactory;
         }
 
-        public async Task<TransformerModel> CreateModelAsync(Guid modelId)
+        public async Task<TransformerModel> CreateModelAsync(Guid modelId, bool useQLora = true)
         {
             await using var db = await _dbFactory.CreateDbContextAsync();
 
@@ -43,7 +43,7 @@ namespace SimpleTransformer.Api.Endpoints.Factories
                 throw new InvalidOperationException($"Training config with id {model.TrainingConfigId} not found in database.");
             }
 
-            return new TransformerModel(modelId, transformerConfig.Config, trainingConfig.Config);
+            return new TransformerModel(modelId, transformerConfig.Config, trainingConfig.Config, useQLora);
         }
     }
 }

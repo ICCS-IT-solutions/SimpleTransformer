@@ -18,8 +18,16 @@ namespace SimpleTransformer.AppDb
         //Associated model, training and vocabulary
         public TransformerConfigEntry? TransformerConfig { get; set; }
         public TrainingConfigEntry? TrainingConfig { get; set; }
-        public VocabularyEntry? Vocabulary { get; set; }        
+        public VocabularyEntry? Vocabulary { get; set; }
 
+        //Training sources
+        public string? InputText { get; set; } //For live training
+        public string InputFilePath { get; set; } = string.Empty; //For batch training using files
+
+        // Optional checkpoint to resume from
+        public Guid? PreviousCheckpointId { get; set; }
+
+        //Status
         public DateTime DateCreated { get; set; } = DateTime.UtcNow;
         public DateTime DateUpdated { get; set; }
         public DateTime? DateStarted { get; set; }
@@ -51,4 +59,38 @@ namespace SimpleTransformer.AppDb
         //Other properties and statuses
         public string Error { get; set; } = string.Empty;
     }
+    /*
+    //Create the training job entry class as a typescript data class
+    export type TrainingJobEntry = {
+        entryId: string;
+        name: string;
+        message: string;
+        transformerConfigId: string;
+        trainingConfigId: string;
+        vocabularyId: string;
+        inputText?: string;
+        inputFilePath: string;
+        previousCheckpointId?: string;
+        previousCheckpoint?: string;
+        dateCreated: Date;
+        dateUpdated: Date;
+        dateStarted?: Date;
+        dateCompleted?: Date;
+        status: TrainingJobStatus;
+        currentEpoch: number;
+        epochsCompleted: number;
+        totalEpochs: number;
+        currentBatch: number;
+        batchesCompleted: number;
+        totalBatches: number;
+        currentSubBatch: number;
+        subBatchesCompleted: number;
+        totalSubBatches: number;
+        currentLoss: number;
+        trainingCheckpointId?: string;
+        checkpointFilename: string;
+        trainingCheckpoint?: TrainingCheckpointEntry;
+        error: string;
+    }
+    */
 }
